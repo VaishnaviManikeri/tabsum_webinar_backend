@@ -1,34 +1,392 @@
-const RegistrationModel = require('../models/registrationModel');
+const RegistrationModel =
+  require('../models/registrationModel');
+
+const db =
+  require('../config/db');
+
 
 class RegistrationController {
 
-  // =====================================================
-  // GET ALL REGISTRATIONS
-  // =====================================================
+  // ==================================================
+  // CREATE REGISTRATION
+  // ==================================================
 
-  static async getRegistrations(req, res) {
+  static async createRegistration(req, res) {
 
     try {
 
       const {
-        search = '',
-        payment_status = 'all',
-        registration_status = 'all'
-      } = req.query;
+        firstName,
+        lastName,
+        email,
+        phone,
+        city,
+        role,
+        goal,
+        consent,
+        webinarId,
+        source
+      } = req.body;
 
 
-      const registrations =
-        await RegistrationModel.getAllRegistrations({
-          search,
-          payment_status,
-          registration_status
+      // ==================================================
+      // REQUIRED FIELDS VALIDATION
+      // ==================================================
+
+      if (
+        !firstName ||
+        !lastName ||
+        !email ||
+        !phone ||
+        !role
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            'Please fill all required fields.'
+        });
+
+      }
+
+
+      // ==================================================
+      // DATA TYPE VALIDATION
+      // ==================================================
+
+      if (
+        typeof firstName !== 'string' ||
+        typeof lastName !== 'string' ||
+        typeof email !== 'string' ||
+        typeof phone !== 'string' ||
+        typeof role !== 'string'
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid registration data.'
+        });
+
+      }
+
+
+      // ==================================================
+      // WHITESPACE / EMPTY STRING VALIDATION
+      // ==================================================
+
+      if (
+        firstName.trim() === '' ||
+        lastName.trim() === '' ||
+        email.trim() === '' ||
+        phone.trim() === '' ||
+        role.trim() === ''
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            'Required fields cannot be empty.'
+        });
+
+      }
+
+
+      // ==================================================
+      // CITY VALIDATION
+      // ==================================================
+
+      if (
+        city !== undefined &&
+        city !== null &&
+        typeof city !== 'string'
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid city.'
+        });
+
+      }
+
+
+      // ==================================================
+      // GOAL VALIDATION
+      // ==================================================
+
+      if (
+        goal !== undefined &&
+        goal !== null &&
+        typeof goal !== 'string'
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid goal.'
+        });
+
+      }
+
+
+      // ==================================================
+      // SOURCE VALIDATION
+      // ==================================================
+
+      if (
+        source !== undefined &&
+        source !== null &&
+        typeof source !== 'string'
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            'Invalid source.'
+        });
+
+      }
+
+
+      // ==================================================
+      // CONSENT VALIDATION
+      // ==================================================
+
+      if (consent !== true) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            'Please accept the registration consent.'
+        });
+
+      }
+
+
+      // ==================================================
+      // EMAIL VALIDATION
+      // ==================================================
+
+      const emailRegex =
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+
+      if (!emailRegex.test(email.trim())) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            'Please enter a valid email address.'
+        });
+
+      }
+
+
+      // ==================================================
+      // WEBINAR VALIDATION
+      // ==================================================
+
+      let validatedWebinarId = null;
+
+
+      // --------------------------------------------------
+      // If webinarId is provided
+      // --------------------------------------------------
+
+      if (
+        webinarId !== undefined &&
+        webinarId !== null &&
+        webinarId !== ''
+      ) {
+
+        const parsedWebinarId =
+          Number(webinarId);
+
+
+        // ------------------------------------------------
+        // VALIDATE WEBINAR ID FORMAT
+        // ------------------------------------------------
+
+        if (
+          !Number.isInteger(parsedWebinarId) ||
+          parsedWebinarId <= 0
+        ) {
+
+          return res.status(400).json({
+            success: false,
+            message:
+              'Please provide a valid webinar ID.'
+          });
+
+        }
+
+
+        // ------------------------------------------------
+        // CHECK WEBINAR EXISTS
+        // ------------------------------------------------
+
+        const [webinarRows] =
+          await db.query(
+            `
+            SELECT
+              id
+            FROM webinars
+            WHERE id = ?
+            LIMIT 1
+            `,
+            [parsedWebinarId]
+          );
+
+
+        // ------------------------------------------------
+        // WEBINAR NOT FOUND
+        // ------------------------------------------------
+
+        if (webinarRows.length === 0) {
+
+          return res.status(404).json({
+            success: false,
+            message:
+              'Webinar not found.'
+          });
+
+        }
+
+
+        // ------------------------------------------------
+        // VALID WEBINAR ID
+        // ------------------------------------------------
+
+        validatedWebinarId =
+          parsedWebinarId;
+
+      }
+
+
+      // ==================================================
+      // CREATE REGISTRATION
+      // ==================================================
+
+      const result =
+        await RegistrationModel.createRegistration({
+
+          firstName:
+            firstName.trim(),
+
+          lastName:
+            lastName.trim(),
+
+          email:
+            email.trim().toLowerCase(),
+
+          phone:
+            phone.trim(),
+
+          city:
+            city?.trim() || null,
+
+          role:
+            role.trim(),
+
+          goal:
+            goal?.trim() || null,
+
+          consent:
+            true,
+
+          webinarId:
+            validatedWebinarId,
+
+          source:
+            source?.trim() || 'Website'
+
         });
 
 
-      res.json({
+      // ==================================================
+      // SUCCESS RESPONSE
+      // ==================================================
+
+      return res.status(201).json({
+
         success: true,
-        count: registrations.length,
-        registrations
+
+        message:
+          'Registration completed successfully.',
+
+        data: result
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        'Create registration error:',
+        error
+      );
+
+
+      // ==================================================
+      // DUPLICATE EMAIL
+      // ==================================================
+
+      if (
+        error.code === 'ER_DUP_ENTRY'
+      ) {
+
+        return res.status(409).json({
+
+          success: false,
+
+          message:
+            'This email is already registered.'
+
+        });
+
+      }
+
+
+      // ==================================================
+      // SERVER ERROR
+      // ==================================================
+
+      return res.status(500).json({
+
+        success: false,
+
+        message:
+          'Unable to complete registration. Please try again.'
+
+      });
+
+    }
+
+  }
+
+
+  // ==================================================
+  // GET ALL REGISTRATIONS
+  // ==================================================
+
+  static async getAllRegistrations(
+    req,
+    res
+  ) {
+
+    try {
+
+      const registrations =
+        await RegistrationModel.getAllRegistrations();
+
+
+      return res.json({
+
+        success: true,
+
+        data: registrations
+
       });
 
 
@@ -40,24 +398,34 @@ class RegistrationController {
       );
 
 
-      res.status(500).json({
+      return res.status(500).json({
+
         success: false,
-        message: 'Failed to fetch registrations'
+
+        message:
+          'Unable to fetch registrations.'
+
       });
 
     }
+
   }
 
 
-  // =====================================================
-  // GET REGISTRATION BY ID
-  // =====================================================
+  // ==================================================
+  // GET SINGLE REGISTRATION
+  // ==================================================
 
-  static async getRegistration(req, res) {
+  static async getRegistrationById(
+    req,
+    res
+  ) {
 
     try {
 
-      const { id } = req.params;
+      const {
+        id
+      } = req.params;
 
 
       const registration =
@@ -69,16 +437,23 @@ class RegistrationController {
       if (!registration) {
 
         return res.status(404).json({
+
           success: false,
-          message: 'Registration not found'
+
+          message:
+            'Registration not found.'
+
         });
 
       }
 
 
-      res.json({
+      return res.json({
+
         success: true,
-        registration
+
+        data: registration
+
       });
 
 
@@ -90,107 +465,150 @@ class RegistrationController {
       );
 
 
-      res.status(500).json({
+      return res.status(500).json({
+
         success: false,
-        message: 'Failed to fetch registration'
+
+        message:
+          'Unable to fetch registration.'
+
       });
 
     }
+
   }
 
 
-  // =====================================================
+  // ==================================================
   // GET REGISTRATION STATS
-  // =====================================================
+  // ==================================================
 
-  static async getStats(req, res) {
+  static async getRegistrationStats(
+    req,
+    res
+  ) {
 
     try {
 
       const stats =
-        await RegistrationModel.getStats();
+        await RegistrationModel.getRegistrationStats();
 
 
-      res.json({
+      return res.json({
+
         success: true,
-        stats
+
+        data: stats
+
       });
 
 
     } catch (error) {
 
       console.error(
-        'Registration stats error:',
+        'Get registration stats error:',
         error
       );
 
 
-      res.status(500).json({
+      return res.status(500).json({
+
         success: false,
-        message: 'Failed to fetch registration statistics'
+
+        message:
+          'Unable to fetch registration statistics.'
+
       });
 
     }
+
   }
 
 
-  // =====================================================
+  // ==================================================
   // UPDATE PAYMENT STATUS
-  // =====================================================
+  // ==================================================
 
-  static async updatePaymentStatus(req, res) {
+  static async updatePaymentStatus(
+    req,
+    res
+  ) {
 
     try {
 
-      const { id } = req.params;
+      const {
+        id
+      } = req.params;
+
 
       const {
         payment_status
       } = req.body;
 
 
-      if (!payment_status) {
+      // ==================================================
+      // ALLOWED PAYMENT STATUSES
+      // ==================================================
+
+      const allowedStatuses = [
+        'pending',
+        'paid',
+        'failed'
+      ];
+
+
+      if (
+        !allowedStatuses.includes(
+          payment_status
+        )
+      ) {
 
         return res.status(400).json({
+
           success: false,
-          message: 'Payment status is required'
+
+          message:
+            'Invalid payment status.'
+
         });
 
       }
 
 
-      const registration =
-        await RegistrationModel.getRegistrationById(
-          id
+      // ==================================================
+      // UPDATE PAYMENT STATUS
+      // ==================================================
+
+      const updated =
+        await RegistrationModel.updatePaymentStatus(
+          id,
+          payment_status
         );
 
 
-      if (!registration) {
+      if (!updated) {
 
         return res.status(404).json({
+
           success: false,
-          message: 'Registration not found'
+
+          message:
+            'Registration not found.'
+
         });
 
       }
 
 
-      await RegistrationModel.updatePaymentStatus(
-        id,
-        payment_status
-      );
+      return res.json({
 
-
-      const updatedRegistration =
-        await RegistrationModel.getRegistrationById(
-          id
-        );
-
-
-      res.json({
         success: true,
-        message: 'Payment status updated successfully',
-        registration: updatedRegistration
+
+        message:
+          'Payment status updated successfully.',
+
+        data: updated
+
       });
 
 
@@ -202,31 +620,23 @@ class RegistrationController {
       );
 
 
-      if (
-        error.message ===
-        'Invalid payment status'
-      ) {
+      return res.status(500).json({
 
-        return res.status(400).json({
-          success: false,
-          message: error.message
-        });
-
-      }
-
-
-      res.status(500).json({
         success: false,
-        message: 'Failed to update payment status'
+
+        message:
+          'Unable to update payment status.'
+
       });
 
     }
+
   }
 
 
-  // =====================================================
+  // ==================================================
   // UPDATE REGISTRATION STATUS
-  // =====================================================
+  // ==================================================
 
   static async updateRegistrationStatus(
     req,
@@ -235,55 +645,78 @@ class RegistrationController {
 
     try {
 
-      const { id } = req.params;
+      const {
+        id
+      } = req.params;
+
 
       const {
         registration_status
       } = req.body;
 
 
-      if (!registration_status) {
+      // ==================================================
+      // ALLOWED REGISTRATION STATUSES
+      // ==================================================
+
+      const allowedStatuses = [
+        'registered',
+        'cancelled'
+      ];
+
+
+      if (
+        !allowedStatuses.includes(
+          registration_status
+        )
+      ) {
 
         return res.status(400).json({
+
           success: false,
-          message: 'Registration status is required'
+
+          message:
+            'Invalid registration status.'
+
         });
 
       }
 
 
-      const registration =
-        await RegistrationModel.getRegistrationById(
-          id
+      // ==================================================
+      // UPDATE REGISTRATION STATUS
+      // ==================================================
+
+      const updated =
+        await RegistrationModel.updateRegistrationStatus(
+          id,
+          registration_status
         );
 
 
-      if (!registration) {
+      if (!updated) {
 
         return res.status(404).json({
+
           success: false,
-          message: 'Registration not found'
+
+          message:
+            'Registration not found.'
+
         });
 
       }
 
 
-      await RegistrationModel.updateRegistrationStatus(
-        id,
-        registration_status
-      );
+      return res.json({
 
-
-      const updatedRegistration =
-        await RegistrationModel.getRegistrationById(
-          id
-        );
-
-
-      res.json({
         success: true,
-        message: 'Registration status updated successfully',
-        registration: updatedRegistration
+
+        message:
+          'Registration status updated successfully.',
+
+        data: updated
+
       });
 
 
@@ -295,28 +728,25 @@ class RegistrationController {
       );
 
 
-      if (
-        error.message ===
-        'Invalid registration status'
-      ) {
+      return res.status(500).json({
 
-        return res.status(400).json({
-          success: false,
-          message: error.message
-        });
-
-      }
-
-
-      res.status(500).json({
         success: false,
-        message: 'Failed to update registration status'
+
+        message:
+          'Unable to update registration status.'
+
       });
 
     }
+
   }
 
 }
 
 
-module.exports = RegistrationController;
+// ==================================================
+// EXPORT CONTROLLER
+// ==================================================
+
+module.exports =
+  RegistrationController;

@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const cron = require('node-cron');
 
 
 // ==================================================
@@ -11,7 +12,10 @@ const fs = require('fs');
 // ==================================================
 
 dotenv.config({
-  path: ['.env.local', '.env']
+  path: [
+    path.join(__dirname, '.env.local'),
+    path.join(__dirname, '.env')
+  ]
 });
 
 
@@ -35,11 +39,48 @@ const settingsRoutes =
   require('./routes/settingsRoutes');
 
 
-// NEW
+// ==================================================
+// REGISTRATION / CRM / PAYMENT ROUTES
+// ==================================================
+
 const registrationRoutes =
   require('./routes/registrationRoutes');
 
-const leadRoutes = require('./routes/leadRoutes');
+const leadRoutes =
+  require('./routes/leadRoutes');
+
+const paymentRoutes =
+  require('./routes/paymentRoutes');
+const reminderRoutes =
+  require('./routes/reminderRoutes');
+
+// ==================================================
+// EMAIL SERVICE - AMAZON SES
+// ==================================================
+
+const {
+  verifyEmailConnection
+} = require('./services/emailService');
+
+
+// ==================================================
+// EMAIL RETRY SERVICE
+// ==================================================
+
+const {
+  processFailedEmails
+} = require('./services/emailRetryService');
+
+
+// ==================================================
+// REMINDER WORKER
+// ==================================================
+
+const {
+  processDueReminders
+} = require('./services/reminderWorker');
+
+
 // ==================================================
 // CREATE EXPRESS APP
 // ==================================================
@@ -61,7 +102,9 @@ if (!fs.existsSync(uploadsDir)) {
 
   fs.mkdirSync(
     uploadsDir,
-    { recursive: true }
+    {
+      recursive: true
+    }
   );
 
 }
@@ -77,10 +120,14 @@ app.use(
     origin: (origin, callback) => {
 
       const allowedOrigins =
-        (process.env.FRONTEND_URL ||
-          'http://localhost:5173')
+        (
+          process.env.FRONTEND_URL ||
+          'http://localhost:5173'
+        )
           .split(',')
-          .map(value => value.trim());
+          .map(
+            value => value.trim()
+          );
 
 
       // Allow requests without origin
@@ -91,13 +138,18 @@ app.use(
         allowedOrigins.includes(origin)
       ) {
 
-        return callback(null, true);
+        return callback(
+          null,
+          true
+        );
 
       }
 
 
       return callback(
-        new Error('Origin not allowed by CORS')
+        new Error(
+          'Origin not allowed by CORS'
+        )
       );
 
     },
@@ -113,7 +165,24 @@ app.use(
 // ==================================================
 
 app.use(
-  express.json()
+  express.json({
+    limit: '10mb',
+
+    verify: (req, res, buf) => {
+
+      if (
+        req.originalUrl ===
+        '/api/payments/webhook'
+      ) {
+
+        req.rawBody =
+          Buffer.from(buf);
+
+      }
+
+    }
+
+  })
 );
 
 app.use(
@@ -183,14 +252,173 @@ app.use(
   settingsRoutes
 );
 
-app.use('/api/leads', leadRoutes);
+
 // ==================================================
-// NEW REGISTRATION ROUTES
+// REGISTRATION ROUTES
 // ==================================================
 
 app.use(
   '/api/registrations',
   registrationRoutes
+);
+
+
+// ==================================================
+// LEAD / CRM ROUTES
+// ==================================================
+
+app.use(
+  '/api/leads',
+  leadRoutes
+);
+
+
+// ==================================================
+// PAYMENT ROUTES
+// ==================================================
+
+app.use(
+  '/api/payments',
+  paymentRoutes
+);
+
+app.use(
+  '/api/reminders',
+  reminderRoutes
+);
+// ==================================================
+// EMAIL RETRY SCHEDULER
+// ==================================================
+
+/*
+  Email retry worker runs every 5 minutes.
+
+  Flow:
+
+  Failed Email
+       ↓
+  email_logs
+       ↓
+  next_retry_at
+       ↓
+  Cron every 5 minutes
+       ↓
+  processFailedEmails()
+       ↓
+  Retry Email
+*/
+
+cron.schedule(
+  '*/5 * * * *',
+  async () => {
+
+    console.log(
+      '\n========================================'
+    );
+
+    console.log(
+      'EMAIL RETRY WORKER STARTED'
+    );
+
+    console.log(
+      '========================================'
+    );
+
+    try {
+
+      const result =
+        await processFailedEmails();
+
+      console.log(
+        'Email Retry Worker Result:',
+        result
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Email Retry Worker Error:',
+        error
+      );
+
+    }
+
+    console.log(
+      '========================================\n'
+    );
+
+  }
+);
+
+
+// ==================================================
+// WEBINAR REMINDER SCHEDULER
+// ==================================================
+
+/*
+  Webinar reminder worker runs every 1 minute.
+
+  Flow:
+
+  Paid Registration
+       ↓
+  webinar_reminder_logs
+       ↓
+  scheduled_at <= NOW()
+       ↓
+  Cron every 1 minute
+       ↓
+  processDueReminders()
+       ↓
+  ┌──────────────────────┐
+  ↓                      ↓
+  Reminder Email     Reminder WhatsApp
+  ↓                      ↓
+  Amazon SES          WhatsApp API
+*/
+
+cron.schedule(
+  '* * * * *',
+  async () => {
+
+    console.log(
+      '\n========================================'
+    );
+
+    console.log(
+      'REMINDER CRON WORKER STARTED'
+    );
+
+    console.log(
+      '========================================'
+    );
+
+    try {
+
+      const result =
+        await processDueReminders({
+          limit: 20
+        });
+
+      console.log(
+        'Reminder Worker Result:',
+        result
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Reminder Cron Worker Error:',
+        error
+      );
+
+    }
+
+    console.log(
+      '========================================\n'
+    );
+
+  }
 );
 
 
@@ -206,6 +434,30 @@ app.use(
       err
     );
 
+
+    // --------------------------------------------------
+    // REQUEST BODY TOO LARGE
+    // --------------------------------------------------
+
+    if (
+      err.type === 'entity.too.large'
+    ) {
+
+      return res.status(413).json({
+
+        success: false,
+
+        message:
+          'Content is too large. Please use an image smaller than 7MB.'
+
+      });
+
+    }
+
+
+    // --------------------------------------------------
+    // MULTER ERROR
+    // --------------------------------------------------
 
     if (
       err instanceof multer.MulterError
@@ -228,6 +480,31 @@ app.use(
 
     }
 
+
+    // --------------------------------------------------
+    // CORS ERROR
+    // --------------------------------------------------
+
+    if (
+      err.message ===
+      'Origin not allowed by CORS'
+    ) {
+
+      return res.status(403).json({
+
+        success: false,
+
+        message:
+          'Origin not allowed by CORS.'
+
+      });
+
+    }
+
+
+    // --------------------------------------------------
+    // DEFAULT ERROR
+    // --------------------------------------------------
 
     res.status(500).json({
 
@@ -257,6 +534,31 @@ app.listen(
 
     console.log(
       `API URL: http://localhost:${PORT}/api`
+    );
+
+
+    // ==================================================
+    // AMAZON SES SMTP CONNECTION TEST
+    // ==================================================
+
+    verifyEmailConnection();
+
+
+    // ==================================================
+    // EMAIL RETRY WORKER STATUS
+    // ==================================================
+
+    console.log(
+      'Email retry worker scheduled: Every 5 minutes'
+    );
+
+
+    // ==================================================
+    // REMINDER WORKER STATUS
+    // ==================================================
+
+    console.log(
+      'Reminder worker scheduled: Every 1 minute'
     );
 
   }

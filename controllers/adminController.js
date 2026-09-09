@@ -25,7 +25,10 @@ class AdminController {
         });
       }
 
-      const isValidPassword = await AdminModel.validatePassword(password, admin.password);
+      const isValidPassword = await AdminModel.validatePassword(
+        password,
+        admin.password
+      );
 
       if (!isValidPassword) {
         return res.status(401).json({
@@ -34,13 +37,27 @@ class AdminController {
         });
       }
 
+      if (!process.env.JWT_SECRET) {
+        console.error('JWT_SECRET is not configured');
+
+        return res.status(500).json({
+          success: false,
+          message: 'Server authentication configuration error'
+        });
+      }
+
       const token = jwt.sign(
-        { id: admin.id, email: admin.email },
+        {
+          id: admin.id,
+          email: admin.email
+        },
         process.env.JWT_SECRET,
-        { expiresIn: '7d' }
+        {
+          expiresIn: '7d'
+        }
       );
 
-      res.json({
+      return res.status(200).json({
         success: true,
         token,
         admin: {
@@ -48,13 +65,16 @@ class AdminController {
           email: admin.email
         }
       });
+
     } catch (error) {
       console.error('Login error:', error);
-      res.status(500).json({
+
+      return res.status(500).json({
         success: false,
-        message: error.code === 'ER_ACCESS_DENIED_ERROR'
-          ? 'Database authentication failed. Check the backend database credentials.'
-          : 'Internal server error'
+        message:
+          error.code === 'ER_ACCESS_DENIED_ERROR'
+            ? 'Database authentication failed. Check the backend database credentials.'
+            : 'Internal server error'
       });
     }
   }

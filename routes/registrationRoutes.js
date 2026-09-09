@@ -9,36 +9,49 @@ const authMiddleware =
 const router = express.Router();
 
 
-// =====================================================
-// ADMIN REGISTRATION ROUTES
-// =====================================================
+// ==================================================
+// PUBLIC REGISTRATION
+// ==================================================
+//
+// Website वरून user registration करू शकतो.
+// यासाठी admin login आवश्यक नाही.
+//
+
+router.post(
+  '/',
+  RegistrationController.createRegistration
+);
 
 
-// Get registration statistics
+// ==================================================
+// PROTECTED ADMIN ROUTES
+// ==================================================
+//
+// खालील सर्व routes फक्त logged-in admin
+// साठी available आहेत.
+//
+
 router.get(
   '/stats',
   authMiddleware,
-  RegistrationController.getStats
+  RegistrationController.getRegistrationStats
 );
 
 
-// Get all registrations
 router.get(
   '/',
   authMiddleware,
-  RegistrationController.getRegistrations
+  RegistrationController.getAllRegistrations
 );
 
 
-// Get single registration
 router.get(
   '/:id',
   authMiddleware,
-  RegistrationController.getRegistration
+  RegistrationController.getRegistrationById
 );
 
 
-// Update payment status
 router.put(
   '/:id/payment',
   authMiddleware,
@@ -46,7 +59,6 @@ router.put(
 );
 
 
-// Update registration status
 router.put(
   '/:id/status',
   authMiddleware,

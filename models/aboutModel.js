@@ -1,11 +1,23 @@
 const db = require('../config/db');
 
 class AboutModel {
+  static parseContent(content) {
+    if (!content) return {};
+    if (typeof content === 'string') {
+      try {
+        return JSON.parse(content);
+      } catch (error) {
+        return {};
+      }
+    }
+    return content;
+  }
+
   static parse(row) {
     if (!row) return null;
     return {
       id: row.id,
-      ...JSON.parse(row.content),
+      ...this.parseContent(row.content),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -13,7 +25,7 @@ class AboutModel {
 
   static async getAll() {
     const [rows] = await db.query('SELECT * FROM about_sections ORDER BY id DESC');
-    return rows.map(this.parse);
+    return rows.map(row => this.parse(row));
   }
 
   static async getById(id) {
