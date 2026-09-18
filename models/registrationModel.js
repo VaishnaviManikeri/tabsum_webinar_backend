@@ -1,6 +1,9 @@
-const db =
-  require('../config/db');
+const db = require('../config/db');
 
+
+// ==================================================
+// REGISTRATION MODEL
+// ==================================================
 
 class RegistrationModel {
 
@@ -14,30 +17,35 @@ class RegistrationModel {
     const connection =
       await db.getConnection();
 
-
     try {
 
       await connection.beginTransaction();
 
 
-      // ------------------------------------------------
-      // 1. Find webinar
-      // ------------------------------------------------
+      // ==================================================
+      // 1. FIND WEBINAR
+      // ==================================================
 
       let webinarId =
         data.webinarId || null;
 
 
+      // --------------------------------------------------
+      // If webinarId is not supplied,
+      // use latest webinar.
+      // --------------------------------------------------
+
       if (!webinarId) {
 
         const [webinars] =
-          await connection.query(`
-            SELECT id
+          await connection.query(
+            `
+            SELECT *
             FROM webinars
             ORDER BY id DESC
             LIMIT 1
-          `);
-
+            `
+          );
 
         if (webinars.length > 0) {
 
@@ -49,9 +57,9 @@ class RegistrationModel {
       }
 
 
-      // ------------------------------------------------
-      // Make sure webinar exists
-      // ------------------------------------------------
+      // ==================================================
+      // 2. MAKE SURE WEBINAR EXISTS
+      // ==================================================
 
       if (!webinarId) {
 
@@ -62,9 +70,50 @@ class RegistrationModel {
       }
 
 
-      // ------------------------------------------------
-      // 2. Find existing lead
-      // ------------------------------------------------
+      // ==================================================
+      // 3. GET COMPLETE WEBINAR
+      // ==================================================
+
+      const [webinarRows] =
+        await connection.query(
+          `
+          SELECT
+            id,
+            title,
+            subtitle,
+            date,
+            time,
+            duration,
+            language,
+            platform,
+            price
+          FROM webinars
+          WHERE id = ?
+          LIMIT 1
+          `,
+          [webinarId]
+        );
+
+
+      if (
+        !webinarRows ||
+        webinarRows.length === 0
+      ) {
+
+        throw new Error(
+          'Webinar not found.'
+        );
+
+      }
+
+
+      const webinar =
+        webinarRows[0];
+
+
+      // ==================================================
+      // 4. FIND EXISTING LEAD
+      // ==================================================
 
       const [existingLeads] =
         await connection.query(
@@ -83,9 +132,9 @@ class RegistrationModel {
       let leadId;
 
 
-      // =================================================
+      // ==================================================
       // EXISTING LEAD
-      // =================================================
+      // ==================================================
 
       if (
         existingLeads.length > 0
@@ -109,30 +158,22 @@ class RegistrationModel {
           WHERE id = ?
           `,
           [
-
             data.firstName,
-
             data.lastName,
-
             data.phone,
-
             data.city || null,
-
             data.role || null,
-
             data.source || 'Website',
-
             leadId
-
           ]
         );
 
       }
 
 
-      // =================================================
+      // ==================================================
       // NEW LEAD
-      // =================================================
+      // ==================================================
 
       else {
 
@@ -153,21 +194,13 @@ class RegistrationModel {
             VALUES (?, ?, ?, ?, ?, ?, ?, 'registered')
             `,
             [
-
               data.firstName,
-
               data.lastName,
-
               data.email,
-
               data.phone,
-
               data.city || null,
-
               data.role || null,
-
               data.source || 'Website'
-
             ]
           );
 
@@ -178,9 +211,41 @@ class RegistrationModel {
       }
 
 
-      // ------------------------------------------------
-      // 3. Create registration
-      // ------------------------------------------------
+      // ==================================================
+      // 5. CREATE WEBINAR SNAPSHOT
+      // ==================================================
+
+      const webinarTitle =
+        webinar.title || null;
+
+      const webinarSubtitle =
+        webinar.subtitle || null;
+
+      const webinarDate =
+        webinar.date || null;
+
+      const webinarTime =
+        webinar.time || null;
+
+      const webinarDuration =
+        webinar.duration || null;
+
+      const webinarLanguage =
+        webinar.language || null;
+
+      const webinarPlatform =
+        webinar.platform || null;
+
+      const webinarPrice =
+        webinar.price !== null &&
+        webinar.price !== undefined
+          ? Number(webinar.price)
+          : null;
+
+
+      // ==================================================
+      // 6. CREATE REGISTRATION
+      // ==================================================
 
       const [registrationResult] =
         await connection.query(
@@ -189,6 +254,7 @@ class RegistrationModel {
           (
             lead_id,
             webinar_id,
+
             first_name,
             last_name,
             email,
@@ -196,38 +262,58 @@ class RegistrationModel {
             city,
             role,
             goal,
-            consent
+            consent,
+
+            webinar_title_snapshot,
+            webinar_subtitle_snapshot,
+            webinar_date_snapshot,
+            webinar_time_snapshot,
+            webinar_duration_snapshot,
+            webinar_language_snapshot,
+            webinar_platform_snapshot,
+            webinar_price_snapshot
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (
+            ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?
+          )
           `,
           [
-
             leadId,
-
             webinarId,
 
             data.firstName,
-
             data.lastName,
-
             data.email,
-
             data.phone,
-
             data.city || null,
-
             data.role || null,
-
             data.goal || null,
+            data.consent ? 1 : 0,
 
-            data.consent ? 1 : 0
-
+            webinarTitle,
+            webinarSubtitle,
+            webinarDate,
+            webinarTime,
+            webinarDuration,
+            webinarLanguage,
+            webinarPlatform,
+            webinarPrice
           ]
         );
 
 
+      // ==================================================
+      // 7. COMMIT
+      // ==================================================
+
       await connection.commit();
 
+
+      // ==================================================
+      // 8. RETURN REGISTRATION DATA
+      // ==================================================
 
       return {
 
@@ -236,10 +322,21 @@ class RegistrationModel {
         registrationId:
           registrationResult.insertId,
 
-        webinarId
+        webinarId,
+
+        webinar: {
+          id: webinar.id,
+          title: webinarTitle,
+          subtitle: webinarSubtitle,
+          date: webinarDate,
+          time: webinarTime,
+          duration: webinarDuration,
+          language: webinarLanguage,
+          platform: webinarPlatform,
+          price: webinarPrice
+        }
 
       };
-
 
     } catch (error) {
 
@@ -263,42 +360,40 @@ class RegistrationModel {
   static async getAllRegistrations() {
 
     const [rows] =
-      await db.query(`
+      await db.query(
+        `
         SELECT
 
           r.id,
-
           r.lead_id,
-
           r.webinar_id,
 
           r.first_name,
-
           r.last_name,
-
           r.email,
-
           r.phone,
-
           r.city,
-
           r.role,
-
           r.goal,
-
           r.consent,
 
           r.registration_status,
-
           r.payment_status,
 
+          r.webinar_title_snapshot,
+          r.webinar_subtitle_snapshot,
+          r.webinar_date_snapshot,
+          r.webinar_time_snapshot,
+          r.webinar_duration_snapshot,
+          r.webinar_language_snapshot,
+          r.webinar_platform_snapshot,
+          r.webinar_price_snapshot,
+
           r.registered_at,
-
           r.created_at,
-
           r.updated_at,
 
-          w.title AS webinar_title
+          w.title AS current_webinar_title
 
         FROM registrations r
 
@@ -306,7 +401,8 @@ class RegistrationModel {
           ON r.webinar_id = w.id
 
         ORDER BY r.id DESC
-      `);
+        `
+      );
 
 
     return rows;
@@ -315,71 +411,62 @@ class RegistrationModel {
 
 
   // ==================================================
-// GET SINGLE REGISTRATION
-// ==================================================
+  // GET SINGLE REGISTRATION
+  // ==================================================
 
-static async getRegistrationById(id) {
+  static async getRegistrationById(id) {
 
-  const [rows] =
-    await db.query(
-      `
-      SELECT
+    const [rows] =
+      await db.query(
+        `
+        SELECT
 
-        r.*,
+          r.*,
 
-        w.title AS webinar_title,
+          r.webinar_title_snapshot AS webinar_title,
+          r.webinar_subtitle_snapshot AS webinar_subtitle,
+          r.webinar_date_snapshot AS webinar_date,
+          r.webinar_time_snapshot AS webinar_time,
+          r.webinar_duration_snapshot AS webinar_duration,
+          r.webinar_language_snapshot AS webinar_language,
+          r.webinar_platform_snapshot AS webinar_platform,
+          r.webinar_price_snapshot AS webinar_price,
 
-        w.date AS webinar_date,
+          w.title AS current_webinar_title,
+          w.date AS current_webinar_date,
+          w.time AS current_webinar_time,
+          w.price AS current_webinar_price
 
-        w.time AS webinar_time,
+        FROM registrations r
 
-        w.duration AS webinar_duration,
+        LEFT JOIN webinars w
+          ON r.webinar_id = w.id
 
-        w.platform AS webinar_platform,
+        WHERE r.id = ?
 
-        w.price AS webinar_price
-
-      FROM registrations r
-
-      LEFT JOIN webinars w
-        ON r.webinar_id = w.id
-
-      WHERE r.id = ?
-
-      LIMIT 1
-      `,
-      [id]
-    );
+        LIMIT 1
+        `,
+        [id]
+      );
 
 
-  // --------------------------------------------------
-  // Registration not found
-  // --------------------------------------------------
+    if (
+      !rows ||
+      rows.length === 0
+    ) {
 
-  if (
-    !rows ||
-    rows.length === 0
-  ) {
+      return null;
 
-    return null;
+    }
+
+
+    return rows[0];
 
   }
 
 
-  // --------------------------------------------------
-  // Registration found
-  // --------------------------------------------------
-
-  return rows[0];
-
-}
-
-
   // ==================================================
   // GET REGISTRATION WITH PAYMENT DETAILS
-  // ==================================================
-  // Used after successful Razorpay payment
-  // to prepare confirmation email.
   // ==================================================
 
   static async getRegistrationWithPaymentDetails(
@@ -394,38 +481,37 @@ static async getRegistrationById(id) {
           r.id,
 
           r.first_name,
-
           r.last_name,
-
           r.email,
-
           r.phone,
-
           r.city,
-
           r.role,
-
           r.goal,
-
           r.consent,
 
           r.registration_status,
-
           r.payment_status,
 
+          r.webinar_title_snapshot AS webinar_title,
+          r.webinar_subtitle_snapshot AS webinar_subtitle,
+          r.webinar_date_snapshot AS webinar_date,
+          r.webinar_time_snapshot AS webinar_time,
+          r.webinar_duration_snapshot AS webinar_duration,
+          r.webinar_language_snapshot AS webinar_language,
+          r.webinar_platform_snapshot AS webinar_platform,
+          r.webinar_price_snapshot AS webinar_price,
+
+          r.webinar_id,
+
+          w.zoom_meeting_id,
+          w.zoom_join_url,
+          w.zoom_start_url,
+          w.zoom_password,
+          w.zoom_created_at,
+
           r.registered_at,
-
-          w.title AS webinar_title,
-
-          w.date AS webinar_date,
-
-          w.time AS webinar_time,
-
-          w.duration AS webinar_duration,
-
-          w.platform AS webinar_platform,
-
-          w.price
+          r.created_at,
+          r.updated_at
 
         FROM registrations r
 
@@ -454,7 +540,8 @@ static async getRegistrationById(id) {
   static async getRegistrationStats() {
 
     const [rows] =
-      await db.query(`
+      await db.query(
+        `
         SELECT
 
           COUNT(*) AS total_registrations,
@@ -480,7 +567,8 @@ static async getRegistrationById(id) {
           ) AS failed
 
         FROM registrations
-      `);
+        `
+      );
 
 
     return {
@@ -587,11 +675,8 @@ static async getRegistrationById(id) {
         await connection.query(
           `
           SELECT lead_id
-
           FROM registrations
-
           WHERE id = ?
-
           LIMIT 1
           `,
           [id]
@@ -690,6 +775,10 @@ static async getRegistrationById(id) {
 
 }
 
+
+// ==================================================
+// EXPORT
+// ==================================================
 
 module.exports =
   RegistrationModel;

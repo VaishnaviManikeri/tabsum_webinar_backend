@@ -1,15 +1,11 @@
-const db = require('../config/db');
-const {
-  createZoomMeeting,
-  getZoomMeeting,
-  deleteZoomMeeting
-} = require('../services/zoomService');
+const db = require("../config/db");
+const zoomService = require("../services/zoomService");
 
-class WebinarModel {
-  // =========================================================
+const WebinarModel = {
+  // ============================================================
   // GET LATEST WEBINAR
-  // =========================================================
-  static async getWebinar() {
+  // ============================================================
+  getWebinar: async () => {
     const [rows] = await db.query(
       `
       SELECT *
@@ -19,13 +15,13 @@ class WebinarModel {
       `
     );
 
-    return rows[0];
-  }
+    return rows[0] || null;
+  },
 
-  // =========================================================
+  // ============================================================
   // GET WEBINAR BY ID
-  // =========================================================
-  static async getWebinarById(webinarId) {
+  // ============================================================
+  getWebinarById: async (id) => {
     const [rows] = await db.query(
       `
       SELECT *
@@ -33,51 +29,51 @@ class WebinarModel {
       WHERE id = ?
       LIMIT 1
       `,
-      [webinarId]
+      [id]
     );
 
-    return rows[0];
-  }
+    return rows[0] || null;
+  },
 
-  // =========================================================
-  // UPDATE / CREATE WEBINAR
-  // Existing functionality preserved
-  // =========================================================
-  static async updateWebinar(data) {
-    const {
-      title,
-      subtitle,
-      date,
-      time,
-      duration,
-      language,
-      platform,
-      price,
-      backgroundImage
-    } = data;
-
-    // Check if webinar exists
-    const existing = await this.getWebinar();
-
-    // =======================================================
-    // UPDATE EXISTING WEBINAR
-    // =======================================================
-    if (existing) {
-      const query = `
-        UPDATE webinars SET
-          title = ?,
-          subtitle = ?,
-          date = ?,
-          time = ?,
-          duration = ?,
-          language = ?,
-          platform = ?,
-          price = ?,
-          background_image = COALESCE(?, background_image)
-        WHERE id = ?
-      `;
-
-      const [result] = await db.query(query, [
+  // ============================================================
+  // CREATE WEBINAR
+  // ============================================================
+  createWebinar: async ({
+    title,
+    subtitle = null,
+    date = null,
+    time = null,
+    duration = null,
+    language = null,
+    platform = null,
+    price = 0,
+    backgroundImage = null,
+    zoomMeetingId = null,
+    zoomJoinUrl = null,
+    zoomStartUrl = null,
+    zoomPassword = null
+  }) => {
+    const [result] = await db.query(
+      `
+      INSERT INTO webinars
+      (
+        title,
+        subtitle,
+        date,
+        time,
+        duration,
+        language,
+        platform,
+        price,
+        background_image,
+        zoom_meeting_id,
+        zoom_join_url,
+        zoom_start_url,
+        zoom_password
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
         title,
         subtitle,
         date,
@@ -87,31 +83,22 @@ class WebinarModel {
         platform,
         price,
         backgroundImage,
-        existing.id
-      ]);
+        zoomMeetingId,
+        zoomJoinUrl,
+        zoomStartUrl,
+        zoomPassword
+      ]
+    );
 
-      return result;
-    }
+    return result.insertId;
+  },
 
-    // =======================================================
-    // CREATE NEW WEBINAR
-    // =======================================================
-    const query = `
-      INSERT INTO webinars (
-        title,
-        subtitle,
-        date,
-        time,
-        duration,
-        language,
-        platform,
-        price,
-        background_image
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const [result] = await db.query(query, [
+  // ============================================================
+  // UPDATE WEBINAR
+  // ============================================================
+  updateWebinar: async (
+    id,
+    {
       title,
       subtitle,
       date,
@@ -120,351 +107,427 @@ class WebinarModel {
       language,
       platform,
       price,
-      backgroundImage
-    ]);
+      backgroundImage = null,
+      zoomMeetingId = null,
+      zoomJoinUrl = null,
+      zoomStartUrl = null,
+      zoomPassword = null
+    }
+  ) => {
+    const normalizedSubtitle =
+      subtitle === undefined || subtitle === ""
+        ? null
+        : subtitle;
+
+    const normalizedDate =
+      date === undefined || date === ""
+        ? null
+        : date;
+
+    const normalizedTime =
+      time === undefined || time === ""
+        ? null
+        : time;
+
+    const normalizedDuration =
+      duration === undefined || duration === ""
+        ? null
+        : duration;
+
+    const normalizedLanguage =
+      language === undefined || language === ""
+        ? null
+        : language;
+
+    const normalizedPlatform =
+      platform === undefined || platform === ""
+        ? null
+        : platform;
+
+    const [result] = await db.query(
+      `
+      UPDATE webinars
+      SET
+        title = ?,
+        subtitle = ?,
+        date = ?,
+        time = ?,
+        duration = ?,
+        language = ?,
+        platform = ?,
+        price = ?,
+        background_image = ?,
+        zoom_meeting_id = ?,
+        zoom_join_url = ?,
+        zoom_start_url = ?,
+        zoom_password = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [
+        title,
+        normalizedSubtitle,
+        normalizedDate,
+        normalizedTime,
+        normalizedDuration,
+        normalizedLanguage,
+        normalizedPlatform,
+        price,
+        backgroundImage,
+        zoomMeetingId,
+        zoomJoinUrl,
+        zoomStartUrl,
+        zoomPassword,
+        id
+      ]
+    );
 
     return result;
-  }
+  },
 
-  // =========================================================
-  // CREATE ZOOM MEETING FOR WEBINAR
-  // =========================================================
-  static async createZoomMeetingForWebinar(webinarId) {
-    try {
-      // -----------------------------------------------------
-      // 1. Get webinar from database
-      // -----------------------------------------------------
-      const webinar = await this.getWebinarById(webinarId);
+  // ============================================================
+  // DELETE WEBINAR
+  // ============================================================
+  deleteWebinar: async (id) => {
+    const webinar = await WebinarModel.getWebinarById(id);
 
-      if (!webinar) {
-        throw new Error(
-          `Webinar with ID ${webinarId} not found.`
-        );
-      }
-
-      // -----------------------------------------------------
-      // 2. Validate webinar date
-      // -----------------------------------------------------
-      if (!webinar.date) {
-        throw new Error(
-          'Webinar date is required before creating Zoom meeting.'
-        );
-      }
-
-      // -----------------------------------------------------
-      // 3. Validate webinar time
-      // -----------------------------------------------------
-      if (!webinar.time) {
-        throw new Error(
-          'Webinar time is required before creating Zoom meeting.'
-        );
-      }
-
-      // -----------------------------------------------------
-      // 4. Prevent duplicate Zoom meeting
-      // -----------------------------------------------------
-      if (webinar.zoom_meeting_id) {
-        console.log(
-          `Zoom meeting already exists for webinar ${webinarId}.`
-        );
-
-        return {
-          success: true,
-          alreadyExists: true,
-          webinarId: webinar.id,
-          meetingId: webinar.zoom_meeting_id,
-          joinUrl: webinar.zoom_join_url,
-          startUrl: webinar.zoom_start_url,
-          password: webinar.zoom_password,
-          zoomCreatedAt: webinar.zoom_created_at
-        };
-      }
-
-      // -----------------------------------------------------
-      // 5. Convert date + time into Zoom start time
-      // -----------------------------------------------------
-      const webinarDate = String(webinar.date).trim();
-      const webinarTime = String(webinar.time).trim();
-
-      let startTime;
-
-      // If time is HH:mm:ss
-      if (/^\d{2}:\d{2}:\d{2}$/.test(webinarTime)) {
-        startTime = `${webinarDate}T${webinarTime}+05:30`;
-      }
-
-      // If time is HH:mm
-      else if (/^\d{2}:\d{2}$/.test(webinarTime)) {
-        startTime = `${webinarDate}T${webinarTime}:00+05:30`;
-      }
-
-      else {
-        throw new Error(
-          `Invalid webinar time format: ${webinarTime}. Expected HH:mm or HH:mm:ss.`
-        );
-      }
-
-      // -----------------------------------------------------
-      // 6. Convert duration
-      // -----------------------------------------------------
-      let durationMinutes = 120;
-
-      if (webinar.duration) {
-        const durationString = String(webinar.duration);
-
-        // Extract first number from values such as:
-        // "120"
-        // "120 Minutes"
-        // "2 Hours"
-        // "2 Hr"
-        const durationMatch = durationString.match(
-          /(\d+(?:\.\d+)?)/
-        );
-
-        if (durationMatch) {
-          const durationValue = Number(durationMatch[1]);
-
-          if (durationString.toLowerCase().includes('hour') ||
-              durationString.toLowerCase().includes('hr')) {
-            durationMinutes = Math.round(
-              durationValue * 60
-            );
-          } else {
-            durationMinutes = Math.round(
-              durationValue
-            );
-          }
-        }
-      }
-
-      // Safety fallback
-      if (!durationMinutes || durationMinutes <= 0) {
-        durationMinutes = 120;
-      }
-
-      // -----------------------------------------------------
-      // 7. Create Zoom meeting
-      // -----------------------------------------------------
-      console.log('');
-      console.log('========================================');
-      console.log('CREATING ZOOM MEETING FOR WEBINAR');
-      console.log('========================================');
-      console.log('Webinar ID:', webinar.id);
-      console.log('Topic:', webinar.title);
-      console.log('Date:', webinarDate);
-      console.log('Time:', webinarTime);
-      console.log('Start Time:', startTime);
-      console.log('Duration:', durationMinutes);
-      console.log('========================================');
-
-      const zoomResult = await createZoomMeeting({
-        topic: webinar.title || 'The Abundance Crossroad™',
-        startTime,
-        duration: durationMinutes,
-        timezone: 'Asia/Kolkata',
-        agenda:
-          webinar.subtitle ||
-          'The Abundance Crossroad™ Webinar'
-      });
-
-      // -----------------------------------------------------
-      // 8. Validate Zoom response
-      // -----------------------------------------------------
-      if (
-        !zoomResult ||
-        !zoomResult.success ||
-        !zoomResult.meetingId ||
-        !zoomResult.joinUrl
-      ) {
-        throw new Error(
-          'Zoom meeting creation failed or returned incomplete data.'
-        );
-      }
-
-      // -----------------------------------------------------
-      // 9. Save Zoom details in database
-      // -----------------------------------------------------
-      const [updateResult] = await db.query(
-        `
-        UPDATE webinars
-        SET
-          zoom_meeting_id = ?,
-          zoom_join_url = ?,
-          zoom_start_url = ?,
-          zoom_password = ?,
-          zoom_created_at = NOW()
-        WHERE id = ?
-        `,
-        [
-          zoomResult.meetingId,
-          zoomResult.joinUrl,
-          zoomResult.startUrl || null,
-          zoomResult.password || null,
-          webinar.id
-        ]
-      );
-
-      if (updateResult.affectedRows === 0) {
-        throw new Error(
-          'Zoom meeting was created, but webinar database record could not be updated.'
-        );
-      }
-
-      // -----------------------------------------------------
-      // 10. Return complete result
-      // -----------------------------------------------------
-      const updatedWebinar =
-        await this.getWebinarById(webinar.id);
-
-      console.log('');
-      console.log('========================================');
-      console.log('ZOOM MEETING SAVED SUCCESSFULLY');
-      console.log('========================================');
-      console.log('Meeting ID:', zoomResult.meetingId);
-      console.log('Join URL:', zoomResult.joinUrl);
-      console.log('Start URL:', zoomResult.startUrl);
-      console.log('Password:', zoomResult.password);
-      console.log('========================================');
-      console.log('');
-
+    if (!webinar) {
       return {
-        success: true,
-        alreadyExists: false,
-        mock: Boolean(zoomResult.mock),
-        webinarId: updatedWebinar.id,
-        meetingId: updatedWebinar.zoom_meeting_id,
-        joinUrl: updatedWebinar.zoom_join_url,
-        startUrl: updatedWebinar.zoom_start_url,
-        password: updatedWebinar.zoom_password,
-        zoomCreatedAt: updatedWebinar.zoom_created_at,
-        webinar: updatedWebinar
+        affectedRows: 0,
+        meetingId: null
       };
-
-    } catch (error) {
-      console.error(
-        'Create Zoom Meeting For Webinar Error:',
-        error
-      );
-
-      throw error;
     }
-  }
 
-  // =========================================================
-  // GET ZOOM MEETING DETAILS
-  // =========================================================
-  static async getZoomMeetingForWebinar(webinarId) {
-    try {
-      const webinar =
-        await this.getWebinarById(webinarId);
+    const originalMeetingId = webinar.zoom_meeting_id || null;
 
-      if (!webinar) {
-        throw new Error(
-          `Webinar with ID ${webinarId} not found.`
+    // Delete Zoom meeting if available
+    if (originalMeetingId) {
+      try {
+        await zoomService.deleteMeeting(originalMeetingId);
+      } catch (error) {
+        console.error(
+          "Zoom meeting deletion failed:",
+          error.message
         );
       }
+    }
 
-      if (!webinar.zoom_meeting_id) {
-        return {
-          success: false,
-          message:
-            'No Zoom meeting is associated with this webinar.'
-        };
-      }
+    const [result] = await db.query(
+      `
+      DELETE FROM webinars
+      WHERE id = ?
+      `,
+      [id]
+    );
 
-      const zoomResult =
-        await getZoomMeeting(
-          webinar.zoom_meeting_id
-        );
+    return {
+      affectedRows: result.affectedRows,
+      meetingId: originalMeetingId
+    };
+  },
 
+  // ============================================================
+  // CREATE ZOOM MEETING
+  // ============================================================
+  createZoomMeeting: async (webinarId) => {
+    const webinar = await WebinarModel.getWebinarById(webinarId);
+
+    if (!webinar) {
+      throw new Error("Webinar not found");
+    }
+
+    if (webinar.zoom_meeting_id) {
       return {
-        success: true,
-        webinarId: webinar.id,
+        alreadyExists: true,
         meetingId: webinar.zoom_meeting_id,
         joinUrl: webinar.zoom_join_url,
-        startUrl: webinar.zoom_start_url,
-        password: webinar.zoom_password,
-        zoomCreatedAt: webinar.zoom_created_at,
-        zoom: zoomResult
+        startUrl: webinar.zoom_start_url
       };
+    }
 
-    } catch (error) {
-      console.error(
-        'Get Zoom Meeting For Webinar Error:',
-        error
+    if (!webinar.date) {
+      throw new Error(
+        "Webinar date is required before creating Zoom meeting"
+      );
+    }
+
+    if (!webinar.time) {
+      throw new Error(
+        "Webinar time is required before creating Zoom meeting"
+      );
+    }
+
+    // ------------------------------------------------------------
+    // Normalize webinar date
+    // ------------------------------------------------------------
+    let webinarDate = webinar.date;
+
+    if (webinarDate instanceof Date) {
+      webinarDate = webinarDate.toISOString().slice(0, 10);
+    } else {
+      webinarDate = String(webinarDate).slice(0, 10);
+    }
+
+    // ------------------------------------------------------------
+    // Normalize webinar time
+    //
+    // Supported:
+    // 08:10
+    // 08:10:00
+    // 08:10PM
+    // 08:10 PM
+    // 08:10PM-10:00PM
+    // 08:10 PM - 10:00 PM
+    //
+    // For time range, Zoom uses the START time.
+    // ------------------------------------------------------------
+    let webinarTime = String(webinar.time).trim();
+
+    if (webinarTime.includes("-")) {
+      webinarTime = webinarTime.split("-")[0].trim();
+    }
+
+    let startTime = webinarTime;
+
+    // ------------------------------------------------------------
+    // 24-hour format HH:mm
+    // ------------------------------------------------------------
+    const twentyFourHourMatch = startTime.match(
+      /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/
+    );
+
+    if (twentyFourHourMatch) {
+      startTime = `${twentyFourHourMatch[1]}:${twentyFourHourMatch[2]}:${twentyFourHourMatch[3] || "00"}`;
+    } else {
+      // ----------------------------------------------------------
+      // 12-hour format
+      // ----------------------------------------------------------
+      const twelveHourMatch = startTime.match(
+        /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i
       );
 
-      throw error;
-    }
-  }
+      if (twelveHourMatch) {
+        let hour = parseInt(
+          twelveHourMatch[1],
+          10
+        );
 
-  // =========================================================
-  // DELETE ZOOM MEETING FOR WEBINAR
-  // =========================================================
-  static async deleteZoomMeetingForWebinar(webinarId) {
-    try {
-      const webinar =
-        await this.getWebinarById(webinarId);
+        const minute = twelveHourMatch[2];
+        const period = twelveHourMatch[3].toUpperCase();
 
-      if (!webinar) {
+        if (hour < 1 || hour > 12) {
+          throw new Error(
+            `Invalid webinar time: ${webinar.time}`
+          );
+        }
+
+        if (period === "AM") {
+          if (hour === 12) {
+            hour = 0;
+          }
+        } else {
+          if (hour !== 12) {
+            hour += 12;
+          }
+        }
+
+        startTime = `${String(hour).padStart(2, "0")}:${minute}:00`;
+      } else {
         throw new Error(
-          `Webinar with ID ${webinarId} not found.`
+          `Invalid webinar time format: ${webinar.time}`
         );
       }
+    }
 
-      if (!webinar.zoom_meeting_id) {
-        return {
-          success: false,
-          message:
-            'No Zoom meeting exists for this webinar.'
-        };
+    // ------------------------------------------------------------
+    // Calculate duration
+    // ------------------------------------------------------------
+    let durationMinutes = 120;
+
+    if (webinar.duration) {
+      const durationText = String(
+        webinar.duration
+      ).toLowerCase();
+
+      const hourMatch = durationText.match(
+        /(\d+(?:\.\d+)?)\s*hour/
+      );
+
+      const minuteMatch = durationText.match(
+        /(\d+)\s*minute/
+      );
+
+      if (hourMatch) {
+        durationMinutes =
+          Number(hourMatch[1]) * 60;
       }
 
-      // -----------------------------------------------------
-      // Delete meeting from Zoom
-      // -----------------------------------------------------
-      const deleteResult =
-        await deleteZoomMeeting(
+      if (minuteMatch) {
+        durationMinutes =
+          Number(minuteMatch[1]);
+      }
+
+      // Examples:
+      // "2 Hours"
+      // "2 Hours / Day"
+      // "120 Minutes"
+      //
+      // If duration is only numeric:
+      if (
+        !hourMatch &&
+        !minuteMatch &&
+        !Number.isNaN(Number(webinar.duration))
+      ) {
+        durationMinutes =
+          Number(webinar.duration);
+      }
+    }
+
+    // ------------------------------------------------------------
+    // Create Zoom meeting
+    // ------------------------------------------------------------
+    const zoomMeeting =
+      await zoomService.createMeeting({
+        topic: webinar.title,
+        date: webinarDate,
+        time: startTime,
+        duration: durationMinutes,
+        timezone: "Asia/Kolkata"
+      });
+
+    if (!zoomMeeting) {
+      throw new Error(
+        "Zoom meeting creation failed"
+      );
+    }
+
+    const meetingId =
+      zoomMeeting.id ||
+      zoomMeeting.meetingId ||
+      null;
+
+    const joinUrl =
+      zoomMeeting.join_url ||
+      zoomMeeting.joinUrl ||
+      null;
+
+    const startUrl =
+      zoomMeeting.start_url ||
+      zoomMeeting.startUrl ||
+      null;
+
+    // ------------------------------------------------------------
+    // Save Zoom information
+    // ------------------------------------------------------------
+    await db.query(
+      `
+      UPDATE webinars
+      SET
+        zoom_meeting_id = ?,
+        zoom_join_url = ?,
+        zoom_start_url = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [
+        meetingId,
+        joinUrl,
+        startUrl,
+        webinarId
+      ]
+    );
+
+    return {
+      alreadyExists: false,
+      meetingId,
+      joinUrl,
+      startUrl
+    };
+  },
+
+  // ============================================================
+  // GET ZOOM MEETING
+  // ============================================================
+  getZoomMeeting: async (webinarId) => {
+    const webinar =
+      await WebinarModel.getWebinarById(
+        webinarId
+      );
+
+    if (!webinar) {
+      throw new Error("Webinar not found");
+    }
+
+    if (!webinar.zoom_meeting_id) {
+      return null;
+    }
+
+    try {
+      const meeting =
+        await zoomService.getMeeting(
           webinar.zoom_meeting_id
         );
 
-      // -----------------------------------------------------
-      // Clear Zoom details from database
-      // -----------------------------------------------------
-      await db.query(
-        `
-        UPDATE webinars
-        SET
-          zoom_meeting_id = NULL,
-          zoom_join_url = NULL,
-          zoom_start_url = NULL,
-          zoom_password = NULL,
-          zoom_created_at = NULL
-        WHERE id = ?
-        `,
-        [webinar.id]
-      );
-
-      console.log(
-        `Zoom meeting deleted for webinar ${webinar.id}.`
+      return meeting;
+    } catch (error) {
+      console.error(
+        "Failed to get Zoom meeting:",
+        error.message
       );
 
       return {
-        success: true,
-        webinarId: webinar.id,
-        meetingId: webinar.zoom_meeting_id,
-        zoom: deleteResult
+        id: webinar.zoom_meeting_id,
+        join_url: webinar.zoom_join_url,
+        start_url: webinar.zoom_start_url
       };
+    }
+  },
 
-    } catch (error) {
-      console.error(
-        'Delete Zoom Meeting For Webinar Error:',
-        error
+  // ============================================================
+  // DELETE ZOOM MEETING
+  // ============================================================
+  deleteZoomMeeting: async (webinarId) => {
+    const webinar =
+      await WebinarModel.getWebinarById(
+        webinarId
       );
 
-      throw error;
+    if (!webinar) {
+      throw new Error("Webinar not found");
     }
+
+    const meetingId =
+      webinar.zoom_meeting_id;
+
+    if (!meetingId) {
+      return {
+        success: true,
+        message: "No Zoom meeting exists"
+      };
+    }
+
+    await zoomService.deleteMeeting(
+      meetingId
+    );
+
+    await db.query(
+      `
+      UPDATE webinars
+      SET
+        zoom_meeting_id = NULL,
+        zoom_join_url = NULL,
+        zoom_start_url = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [webinarId]
+    );
+
+    return {
+      success: true,
+      meetingId
+    };
   }
-}
+};
 
 module.exports = WebinarModel;

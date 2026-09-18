@@ -5,13 +5,21 @@ const db =
   require('../config/db');
 
 
+// ==================================================
+// REGISTRATION CONTROLLER
+// ==================================================
+
 class RegistrationController {
+
 
   // ==================================================
   // CREATE REGISTRATION
   // ==================================================
 
-  static async createRegistration(req, res) {
+  static async createRegistration(
+    req,
+    res
+  ) {
 
     try {
 
@@ -172,7 +180,11 @@ class RegistrationController {
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 
-      if (!emailRegex.test(email.trim())) {
+      if (
+        !emailRegex.test(
+          email.trim()
+        )
+      ) {
 
         return res.status(400).json({
           success: false,
@@ -187,7 +199,8 @@ class RegistrationController {
       // WEBINAR VALIDATION
       // ==================================================
 
-      let validatedWebinarId = null;
+      let validatedWebinarId =
+        null;
 
 
       // --------------------------------------------------
@@ -205,11 +218,13 @@ class RegistrationController {
 
 
         // ------------------------------------------------
-        // VALIDATE WEBINAR ID FORMAT
+        // Validate webinar ID format
         // ------------------------------------------------
 
         if (
-          !Number.isInteger(parsedWebinarId) ||
+          !Number.isInteger(
+            parsedWebinarId
+          ) ||
           parsedWebinarId <= 0
         ) {
 
@@ -223,14 +238,13 @@ class RegistrationController {
 
 
         // ------------------------------------------------
-        // CHECK WEBINAR EXISTS
+        // Check webinar exists
         // ------------------------------------------------
 
         const [webinarRows] =
           await db.query(
             `
-            SELECT
-              id
+            SELECT id
             FROM webinars
             WHERE id = ?
             LIMIT 1
@@ -239,11 +253,9 @@ class RegistrationController {
           );
 
 
-        // ------------------------------------------------
-        // WEBINAR NOT FOUND
-        // ------------------------------------------------
-
-        if (webinarRows.length === 0) {
+        if (
+          webinarRows.length === 0
+        ) {
 
           return res.status(404).json({
             success: false,
@@ -253,10 +265,6 @@ class RegistrationController {
 
         }
 
-
-        // ------------------------------------------------
-        // VALID WEBINAR ID
-        // ------------------------------------------------
 
         validatedWebinarId =
           parsedWebinarId;
@@ -299,7 +307,8 @@ class RegistrationController {
             validatedWebinarId,
 
           source:
-            source?.trim() || 'Website'
+            source?.trim() ||
+            'Website'
 
         });
 
@@ -333,7 +342,8 @@ class RegistrationController {
       // ==================================================
 
       if (
-        error.code === 'ER_DUP_ENTRY'
+        error.code ===
+        'ER_DUP_ENTRY'
       ) {
 
         return res.status(409).json({
@@ -342,6 +352,48 @@ class RegistrationController {
 
           message:
             'This email is already registered.'
+
+        });
+
+      }
+
+
+      // ==================================================
+      // WEBINAR NOT FOUND
+      // ==================================================
+
+      if (
+        error.message ===
+        'Webinar not found.'
+      ) {
+
+        return res.status(404).json({
+
+          success: false,
+
+          message:
+            'Webinar not found.'
+
+        });
+
+      }
+
+
+      // ==================================================
+      // NO WEBINAR AVAILABLE
+      // ==================================================
+
+      if (
+        error.message ===
+        'No webinar is available for registration.'
+      ) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            error.message
 
         });
 
@@ -385,7 +437,8 @@ class RegistrationController {
 
         success: true,
 
-        data: registrations
+        data:
+          registrations
 
       });
 
@@ -452,7 +505,8 @@ class RegistrationController {
 
         success: true,
 
-        data: registration
+        data:
+          registration
 
       });
 
@@ -498,7 +552,8 @@ class RegistrationController {
 
         success: true,
 
-        data: stats
+        data:
+          stats
 
       });
 
@@ -546,10 +601,6 @@ class RegistrationController {
       } = req.body;
 
 
-      // ==================================================
-      // ALLOWED PAYMENT STATUSES
-      // ==================================================
-
       const allowedStatuses = [
         'pending',
         'paid',
@@ -574,10 +625,6 @@ class RegistrationController {
 
       }
 
-
-      // ==================================================
-      // UPDATE PAYMENT STATUS
-      // ==================================================
 
       const updated =
         await RegistrationModel.updatePaymentStatus(
@@ -607,7 +654,8 @@ class RegistrationController {
         message:
           'Payment status updated successfully.',
 
-        data: updated
+        data:
+          updated
 
       });
 
@@ -655,10 +703,6 @@ class RegistrationController {
       } = req.body;
 
 
-      // ==================================================
-      // ALLOWED REGISTRATION STATUSES
-      // ==================================================
-
       const allowedStatuses = [
         'registered',
         'cancelled'
@@ -682,10 +726,6 @@ class RegistrationController {
 
       }
 
-
-      // ==================================================
-      // UPDATE REGISTRATION STATUS
-      // ==================================================
 
       const updated =
         await RegistrationModel.updateRegistrationStatus(
@@ -715,7 +755,8 @@ class RegistrationController {
         message:
           'Registration status updated successfully.',
 
-        data: updated
+        data:
+          updated
 
       });
 
@@ -745,7 +786,7 @@ class RegistrationController {
 
 
 // ==================================================
-// EXPORT CONTROLLER
+// EXPORT
 // ==================================================
 
 module.exports =

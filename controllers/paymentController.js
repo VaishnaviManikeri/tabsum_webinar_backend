@@ -1,9 +1,11 @@
 const PaymentModel =
   require('../models/paymentModel');
 
-
 const RegistrationModel =
   require('../models/registrationModel');
+
+const WebinarModel =
+  require('../models/webinarModel');
 
 
 // ======================================================
@@ -49,9 +51,9 @@ const {
 // PAYMENT CONFIGURATION
 // ======================================================
 
-const PAYMENT_AMOUNT_RUPEES = 249;
-
-const PAYMENT_AMOUNT_PAISE = 24900;
+// IMPORTANT:
+// Webinar price is NOT hard-coded here.
+// Current price is fetched from webinars table.
 
 const PAYMENT_CURRENCY = 'INR';
 
@@ -72,75 +74,75 @@ const createPaymentOrder = async (req, res) => {
     // --------------------------------------------------
     // Validate registration ID
     // --------------------------------------------------
-// --------------------------------------------------
-// Validate registration ID
-// --------------------------------------------------
 
-if (
-  registrationId === undefined ||
-  registrationId === null ||
-  registrationId === ''
-) {
+    if (
+      registrationId === undefined ||
+      registrationId === null ||
+      registrationId === ''
+    ) {
 
-  return res.status(400).json({
+      return res.status(400).json({
 
-    success: false,
+        success: false,
 
-    message:
-      'Registration ID is required'
+        message:
+          'Registration ID is required'
 
-  });
+      });
 
-}
+    }
 
 
-// --------------------------------------------------
-// Validate registration ID type
-// --------------------------------------------------
+    // --------------------------------------------------
+    // Validate registration ID type
+    // --------------------------------------------------
 
-const numericRegistrationId =
-  Number(registrationId);
-
-
-if (
-  typeof registrationId === 'boolean' ||
-  typeof registrationId === 'object' ||
-  !Number.isInteger(numericRegistrationId) ||
-  numericRegistrationId <= 0
-) {
-
-  return res.status(400).json({
-
-    success: false,
-
-    message:
-      'Please provide a valid registration ID'
-
-  });
-
-}
-// --------------------------------------------------
-// Check registration exists
-// --------------------------------------------------
-
-const registration =
-  await RegistrationModel.getRegistrationById(
-    numericRegistrationId
-  );
+    const numericRegistrationId =
+      Number(registrationId);
 
 
-if (!registration) {
+    if (
+      typeof registrationId === 'boolean' ||
+      typeof registrationId === 'object' ||
+      !Number.isInteger(numericRegistrationId) ||
+      numericRegistrationId <= 0
+    ) {
 
-  return res.status(404).json({
+      return res.status(400).json({
 
-    success: false,
+        success: false,
 
-    message:
-      'Registration not found'
+        message:
+          'Please provide a valid registration ID'
 
-  });
+      });
 
-}
+    }
+
+
+    // --------------------------------------------------
+    // Check registration exists
+    // --------------------------------------------------
+
+    const registration =
+      await RegistrationModel.getRegistrationById(
+        numericRegistrationId
+      );
+
+
+    if (!registration) {
+
+      return res.status(404).json({
+
+        success: false,
+
+        message:
+          'Registration not found'
+
+      });
+
+    }
+
 
     // --------------------------------------------------
     // Check existing payment
@@ -148,7 +150,7 @@ if (!registration) {
 
     const existingPayment =
       await PaymentModel.getPaymentByRegistrationId(
-        registrationId
+        numericRegistrationId
       );
 
 
@@ -174,11 +176,85 @@ if (!registration) {
 
 
     // --------------------------------------------------
+    // Get CURRENT webinar
+    // --------------------------------------------------
+
+    const webinar =
+      await WebinarModel.getWebinarById(
+        registration.webinar_id
+      );
+
+
+    if (!webinar) {
+
+      return res.status(404).json({
+
+        success: false,
+
+        message:
+          'Webinar not found for this registration'
+
+      });
+
+    }
+
+
+    // --------------------------------------------------
+    // Get CURRENT ADMIN-CONFIGURED PRICE
+    // --------------------------------------------------
+
+    const currentPrice =
+      Number(webinar.price);
+
+
+    if (
+      !Number.isFinite(currentPrice) ||
+      currentPrice <= 0
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'Webinar price is not configured correctly'
+
+      });
+
+    }
+
+
+    // --------------------------------------------------
+    // Convert Rupees to Paise
+    // --------------------------------------------------
+
+    const currentPricePaise =
+      Math.round(currentPrice * 100);
+
+
+    if (
+      !Number.isInteger(currentPricePaise) ||
+      currentPricePaise <= 0
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'Invalid webinar payment amount'
+
+      });
+
+    }
+
+
+    // --------------------------------------------------
     // Razorpay receipt
     // --------------------------------------------------
 
     const receipt =
-      `webinar_reg_${registrationId}_${Date.now()}`;
+      `webinar_reg_${numericRegistrationId}_${Date.now()}`;
 
 
     // --------------------------------------------------
@@ -189,7 +265,7 @@ if (!registration) {
       await createRazorpayOrder({
 
         amount:
-          PAYMENT_AMOUNT_PAISE,
+          currentPricePaise,
 
         currency:
           PAYMENT_CURRENCY,
@@ -199,11 +275,55 @@ if (!registration) {
         notes: {
 
           registration_id:
-            String(registrationId)
+            String(numericRegistrationId),
+
+          webinar_id:
+            String(webinar.id),
+
+          webinar_price:
+            String(currentPrice)
 
         }
 
       });
+
+
+    // --------------------------------------------------
+    // Validate Razorpay order amount
+    // --------------------------------------------------
+
+    if (
+      !order ||
+      !order.id ||
+      Number(order.amount) !== currentPricePaise
+    ) {
+
+      console.error(
+        'Razorpay order amount mismatch:',
+        {
+          registrationId:
+            numericRegistrationId,
+
+          expectedAmount:
+            currentPricePaise,
+
+          razorpayAmount:
+            order?.amount
+
+        }
+      );
+
+
+      return res.status(500).json({
+
+        success: false,
+
+        message:
+          'Payment order amount validation failed'
+
+      });
+
+    }
 
 
     let paymentRecordId;
@@ -224,7 +344,7 @@ if (!registration) {
           order.id,
 
         amount:
-          PAYMENT_AMOUNT_RUPEES,
+          currentPrice,
 
         currency:
           PAYMENT_CURRENCY
@@ -247,13 +367,14 @@ if (!registration) {
       paymentRecordId =
         await PaymentModel.createPayment({
 
-          registrationId,
+          registrationId:
+            numericRegistrationId,
 
           orderId:
             order.id,
 
           amount:
-            PAYMENT_AMOUNT_RUPEES,
+            currentPrice,
 
           currency:
             PAYMENT_CURRENCY,
@@ -378,6 +499,33 @@ const verifyPayment = async (req, res) => {
 
 
     // --------------------------------------------------
+    // Validate registration ID
+    // --------------------------------------------------
+
+    const numericRegistrationId =
+      Number(registrationId);
+
+
+    if (
+      typeof registrationId === 'boolean' ||
+      typeof registrationId === 'object' ||
+      !Number.isInteger(numericRegistrationId) ||
+      numericRegistrationId <= 0
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'Please provide a valid registration ID'
+
+      });
+
+    }
+
+
+    // --------------------------------------------------
     // Find payment using Razorpay order ID
     // --------------------------------------------------
 
@@ -406,11 +554,8 @@ const verifyPayment = async (req, res) => {
     // --------------------------------------------------
 
     if (
-
       Number(payment.registration_id) !==
-
-      Number(registrationId)
-
+      numericRegistrationId
     ) {
 
       return res.status(403).json({
@@ -442,7 +587,8 @@ const verifyPayment = async (req, res) => {
 
         data: {
 
-          registrationId,
+          registrationId:
+            numericRegistrationId,
 
           paymentId:
             payment.payment_id,
@@ -475,24 +621,26 @@ const verifyPayment = async (req, res) => {
     // VERIFY STORED PAYMENT AMOUNT
     // ==================================================
 
+    const storedPaymentAmount =
+      Number(payment.amount);
+
+
     if (
-      Number(payment.amount) !==
-      PAYMENT_AMOUNT_RUPEES
+      !Number.isFinite(storedPaymentAmount) ||
+      storedPaymentAmount <= 0
     ) {
 
       console.error(
-        'Stored payment amount mismatch:',
+        'Invalid stored payment amount:',
         {
-          registrationId,
+          registrationId:
+            numericRegistrationId,
 
           paymentId:
             payment.id,
 
           storedAmount:
-            payment.amount,
-
-          expectedAmount:
-            PAYMENT_AMOUNT_RUPEES
+            payment.amount
 
         }
       );
@@ -503,11 +651,21 @@ const verifyPayment = async (req, res) => {
         success: false,
 
         message:
-          'Payment amount mismatch'
+          'Invalid stored payment amount'
 
       });
 
     }
+
+
+    // --------------------------------------------------
+    // Convert stored amount to paise
+    // --------------------------------------------------
+
+    const storedPaymentAmountPaise =
+      Math.round(
+        storedPaymentAmount * 100
+      );
 
 
     // ==================================================
@@ -523,7 +681,8 @@ const verifyPayment = async (req, res) => {
       console.error(
         'Stored payment currency mismatch:',
         {
-          registrationId,
+          registrationId:
+            numericRegistrationId,
 
           paymentId:
             payment.id,
@@ -612,7 +771,7 @@ const verifyPayment = async (req, res) => {
               storedOrderId,
 
             amount:
-              PAYMENT_AMOUNT_PAISE,
+              storedPaymentAmountPaise,
 
             currency:
               PAYMENT_CURRENCY,
@@ -660,7 +819,8 @@ const verifyPayment = async (req, res) => {
       console.error(
         'Razorpay payment order mismatch:',
         {
-          registrationId,
+          registrationId:
+            numericRegistrationId,
 
           paymentId:
             razorpay_payment_id,
@@ -693,14 +853,17 @@ const verifyPayment = async (req, res) => {
     // ==================================================
 
     if (
-      String(razorpayPayment.currency).toUpperCase() !==
+      String(
+        razorpayPayment.currency
+      ).toUpperCase() !==
       PAYMENT_CURRENCY
     ) {
 
       console.error(
         'Razorpay payment currency mismatch:',
         {
-          registrationId,
+          registrationId:
+            numericRegistrationId,
 
           paymentId:
             razorpay_payment_id,
@@ -734,13 +897,14 @@ const verifyPayment = async (req, res) => {
 
     if (
       Number(razorpayPayment.amount) !==
-      PAYMENT_AMOUNT_PAISE
+      storedPaymentAmountPaise
     ) {
 
       console.error(
         'Razorpay payment amount mismatch:',
         {
-          registrationId,
+          registrationId:
+            numericRegistrationId,
 
           paymentId:
             razorpay_payment_id,
@@ -749,7 +913,7 @@ const verifyPayment = async (req, res) => {
             razorpayPayment.amount,
 
           expectedAmount:
-            PAYMENT_AMOUNT_PAISE
+            storedPaymentAmountPaise
 
         }
       );
@@ -789,11 +953,56 @@ const verifyPayment = async (req, res) => {
     }
 
 
-    // ==================================================
-    // UPDATE PAYMENT RECORD
-    // ==================================================
+   // ==================================================
+// UPDATE PAYMENT RECORD
+// ==================================================
+// IMPORTANT:
+// PaymentModel performs an atomic update:
+//
+// WHERE order_id = ?
+// AND status = 'pending'
+//
+// Therefore only the FIRST verification request
+// can change the payment from pending -> paid.
+//
+// If affectedRows is 0, another request has already
+// processed this payment. Stop before running any
+// registration/reminder/email/WhatsApp automation.
+// ==================================================
 
-    await PaymentModel.updatePayment({
+const updateResult =
+  await PaymentModel.updatePayment({
+
+    orderId:
+      storedOrderId,
+
+    paymentId:
+      razorpay_payment_id,
+
+    status:
+      'paid',
+
+    method:
+      razorpayPayment.method ||
+      null
+
+  });
+
+
+// ==================================================
+// IDEMPOTENCY / DUPLICATE VERIFICATION PROTECTION
+// ==================================================
+
+if (
+  !updateResult ||
+  updateResult.affectedRows !== 1
+) {
+
+  console.log(
+    'Payment already processed or update was not applied:',
+    {
+      registrationId:
+        numericRegistrationId,
 
       orderId:
         storedOrderId,
@@ -801,15 +1010,52 @@ const verifyPayment = async (req, res) => {
       paymentId:
         razorpay_payment_id,
 
+      affectedRows:
+        updateResult?.affectedRows ?? 0
+    }
+  );
+
+
+  return res.status(200).json({
+
+    success:
+      true,
+
+    message:
+      'Payment already processed',
+
+    data: {
+
+      registrationId:
+        numericRegistrationId,
+
+      paymentId:
+        razorpay_payment_id,
+
+      orderId:
+        storedOrderId,
+
       status:
         'paid',
 
-      method:
-        razorpayPayment.method ||
-        null
+      alreadyProcessed:
+        true,
 
-    });
+      communication: {
 
+        email:
+          'already_processed',
+
+        whatsapp:
+          'already_processed'
+
+      }
+
+    }
+
+  });
+
+}
 
     // ==================================================
     // UPDATE REGISTRATION PAYMENT STATUS
@@ -818,7 +1064,7 @@ const verifyPayment = async (req, res) => {
     const updatedRegistration =
       await RegistrationModel.updatePaymentStatus(
 
-        registrationId,
+        numericRegistrationId,
 
         'paid'
 
@@ -829,7 +1075,7 @@ const verifyPayment = async (req, res) => {
 
       console.error(
         'Registration not found after payment:',
-        registrationId
+        numericRegistrationId
       );
 
     }
@@ -842,7 +1088,7 @@ const verifyPayment = async (req, res) => {
     const registration =
       await RegistrationModel
         .getRegistrationWithPaymentDetails(
-          registrationId
+          numericRegistrationId
         );
 
 
@@ -853,7 +1099,7 @@ const verifyPayment = async (req, res) => {
     const paymentDetails =
       await PaymentModel
         .getPaymentByRegistrationId(
-          registrationId
+          numericRegistrationId
         );
 
 
@@ -872,39 +1118,38 @@ const verifyPayment = async (req, res) => {
       '\n========================================'
     );
 
-
     console.log(
       'PAYMENT SUCCESSFUL'
     );
-
 
     console.log(
       '========================================'
     );
 
-
     console.log(
       'Registration ID:',
-      registrationId
+      numericRegistrationId
     );
-
 
     console.log(
       'Payment ID:',
       razorpay_payment_id
     );
 
-
     console.log(
       'Order ID:',
       storedOrderId
     );
 
+    console.log(
+      'Payment Amount:',
+      storedPaymentAmount,
+      PAYMENT_CURRENCY
+    );
 
     console.log(
       'Payment Status: PAID'
     );
-
 
     console.log(
       '========================================\n'
@@ -947,9 +1192,7 @@ const verifyPayment = async (req, res) => {
 
 
         const reminderResult =
-          await createReminderLogsForRegistration(
-            registration
-          );
+          await createReminderLogsForRegistration(registration.id);
 
 
         reminderAutomation.success =
@@ -981,40 +1224,33 @@ const verifyPayment = async (req, res) => {
           '\n========================================'
         );
 
-
         console.log(
           'REMINDER AUTOMATION SUCCESS'
         );
-
 
         console.log(
           '========================================'
         );
 
-
         console.log(
           'Registration ID:',
-          registrationId
+          numericRegistrationId
         );
-
 
         console.log(
           'Created:',
           reminderAutomation.created
         );
 
-
         console.log(
           'Skipped:',
           reminderAutomation.skipped
         );
 
-
         console.log(
           'Reminders:',
           reminderAutomation.reminders
         );
-
 
         console.log(
           '========================================\n'
@@ -1148,7 +1384,6 @@ const verifyPayment = async (req, res) => {
           '\nEMAIL AUTOMATION SUCCESS'
         );
 
-
         console.log(
           'Email Result:',
           emailResult
@@ -1230,7 +1465,6 @@ const verifyPayment = async (req, res) => {
           '\nWHATSAPP AUTOMATION SUCCESS'
         );
 
-
         console.log(
           'WhatsApp Result:',
           whatsappResult
@@ -1277,22 +1511,24 @@ const verifyPayment = async (req, res) => {
       '\n========================================'
     );
 
-
     console.log(
       'POST-PAYMENT AUTOMATION SUMMARY'
     );
 
-
     console.log(
       '========================================'
     );
-
 
     console.log(
       'Payment:',
       'PAID'
     );
 
+    console.log(
+      'Amount:',
+      storedPaymentAmount,
+      PAYMENT_CURRENCY
+    );
 
     console.log(
       'Reminders:',
@@ -1300,7 +1536,6 @@ const verifyPayment = async (req, res) => {
         ? `${reminderAutomation.created} CREATED`
         : 'FAILED / NOT CREATED'
     );
-
 
     console.log(
       'Email:',
@@ -1311,7 +1546,6 @@ const verifyPayment = async (req, res) => {
           : 'FAILED / NOT SENT'
     );
 
-
     console.log(
       'WhatsApp:',
       communication.whatsapp.success
@@ -1320,7 +1554,6 @@ const verifyPayment = async (req, res) => {
           ? 'ALREADY SENT'
           : 'FAILED / NOT SENT'
     );
-
 
     console.log(
       '========================================\n'
@@ -1340,13 +1573,20 @@ const verifyPayment = async (req, res) => {
 
       data: {
 
-        registrationId,
+        registrationId:
+          numericRegistrationId,
 
         paymentId:
           razorpay_payment_id,
 
         orderId:
           storedOrderId,
+
+        amount:
+          storedPaymentAmount,
+
+        currency:
+          PAYMENT_CURRENCY,
 
         status:
           'paid',

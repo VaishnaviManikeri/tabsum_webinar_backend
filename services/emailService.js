@@ -52,6 +52,136 @@ async function verifyEmailConnection() {
 }
 
 // ==================================================
+// CALENDAR DATE/TIME NORMALIZATION
+// ==================================================
+
+function normalizeCalendarDate(value) {
+  if (!value) {
+    return null;
+  }
+
+  const stringValue =
+    String(value).trim();
+
+  // Already YYYY-MM-DD
+  const directMatch =
+    stringValue.match(
+      /^(\d{4})-(\d{2})-(\d{2})$/
+    );
+
+  if (directMatch) {
+    return stringValue;
+  }
+
+  // ISO datetime / MySQL datetime
+  const isoMatch =
+    stringValue.match(
+      /^(\d{4})-(\d{2})-(\d{2})/
+    );
+
+  if (isoMatch) {
+    return (
+      `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`
+    );
+  }
+
+  return null;
+}
+
+
+function normalizeCalendarTime(value) {
+  if (!value) {
+    return null;
+  }
+
+  const stringValue =
+    String(value)
+      .trim()
+      .toUpperCase();
+
+  // --------------------------------------------------
+  // Already HH:mm or HH:mm:ss
+  // --------------------------------------------------
+
+  const twentyFourHourMatch =
+    stringValue.match(
+      /^(\d{1,2}):(\d{2})(?::\d{2})?$/
+    );
+
+  if (twentyFourHourMatch) {
+    const hour =
+      Number(twentyFourHourMatch[1]);
+
+    const minute =
+      Number(twentyFourHourMatch[2]);
+
+    if (
+      hour >= 0 &&
+      hour <= 23 &&
+      minute >= 0 &&
+      minute <= 59
+    ) {
+      return (
+        `${String(hour).padStart(2, '0')}:` +
+        `${String(minute).padStart(2, '0')}`
+      );
+    }
+  }
+
+  // --------------------------------------------------
+  // Time range
+  //
+  // Example:
+  // 08:00PM-10:00PM
+  // 08:00 PM - 10:00 PM
+  // --------------------------------------------------
+
+  const rangeMatch =
+    stringValue.match(
+      /^(\d{1,2}):(\d{2})\s*(AM|PM)\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)$/
+    );
+
+  if (rangeMatch) {
+    let hour =
+      Number(rangeMatch[1]);
+
+    const minute =
+      Number(rangeMatch[2]);
+
+    const meridiem =
+      rangeMatch[3];
+
+    if (
+      meridiem === 'PM' &&
+      hour !== 12
+    ) {
+      hour += 12;
+    }
+
+    if (
+      meridiem === 'AM' &&
+      hour === 12
+    ) {
+      hour = 0;
+    }
+
+    if (
+      hour >= 0 &&
+      hour <= 23 &&
+      minute >= 0 &&
+      minute <= 59
+    ) {
+      return (
+        `${String(hour).padStart(2, '0')}:` +
+        `${String(minute).padStart(2, '0')}`
+      );
+    }
+  }
+
+  return null;
+}
+
+// ==================================================
 // SEND REGISTRATION CONFIRMATION
 // ==================================================
 
@@ -211,9 +341,6 @@ async function sendRegistrationConfirmation({
   // --------------------------------------------------
   // FETCH ZOOM DETAILS FROM WEBINAR
   // --------------------------------------------------
-  // Registration data may not contain Zoom fields.
-  // In that case, fetch the webinar using webinar_id.
-  // --------------------------------------------------
 
   if (
     registration.webinar_id &&
@@ -267,11 +394,6 @@ async function sendRegistrationConfirmation({
         createdAt: zoomCreatedAt
       });
     } catch (zoomFetchError) {
-      // ------------------------------------------------
-      // IMPORTANT:
-      // Zoom fetch failure should NOT stop email.
-      // ------------------------------------------------
-
       console.error(
         'Failed to fetch Zoom details for email:',
         zoomFetchError.message
@@ -318,64 +440,124 @@ async function sendRegistrationConfirmation({
      *
      * time:
      * HH:mm
-     *
-     * Example:
-     * 2026-10-15
-     * 10:00
      */
 
     if (
       registration.webinar_date &&
       registration.webinar_time
     ) {
-      const calendarResult =
-        await createWebinarCalendarEvent({
-          title: webinarTitle,
+      const normalizedCalendarDate =
+        normalizeCalendarDate(
+          registration.webinar_date
+        );
 
-          description:
-            'The 2-Day Experience That Will Transform the Way You Make Decisions About Money, Success, Leadership and Life.',
+      const normalizedCalendarTime =
+        normalizeCalendarTime(
+          registration.webinar_time
+        );
 
-          date: String(registration.webinar_date),
+      console.log(
+        'Calendar date normalization:',
+        {
+          original:
+            registration.webinar_date,
 
-          time: String(registration.webinar_time),
+          normalized:
+            normalizedCalendarDate
+        }
+      );
 
-          durationMinutes: 120,
+      console.log(
+        'Calendar time normalization:',
+        {
+          original:
+            registration.webinar_time,
 
-          location: webinarPlatform
-        });
+          normalized:
+            normalizedCalendarTime
+        }
+      );
+
+      // ------------------------------------------------
+      // VALIDATE NORMALIZED DATE/TIME
+      // ------------------------------------------------
 
       if (
-        calendarResult &&
-        calendarResult.success &&
-        calendarResult.calendarContent
+        !normalizedCalendarDate ||
+        !normalizedCalendarTime
       ) {
-        calendarAttachment = {
-          filename:
-            calendarResult.filename ||
-            'the-abundance-crossroad.ics',
+        console.warn(
+          'Invalid webinar date/time for calendar invitation.',
+          {
+            webinarDate:
+              registration.webinar_date,
 
-          content:
-            calendarResult.calendarContent,
+            webinarTime:
+              registration.webinar_time,
 
-          contentType:
-            'text/calendar; charset=utf-8',
+            normalizedDate:
+              normalizedCalendarDate,
 
-          contentDisposition:
-            'attachment'
-        };
-
-        console.log(
-          'Calendar invitation generated successfully.'
-        );
-
-        console.log(
-          'Calendar file:',
-          calendarAttachment.filename
+            normalizedTime:
+              normalizedCalendarTime
+          }
         );
       } else {
-        console.warn(
-          'Calendar invitation could not be generated.'
-        );
+        // ----------------------------------------------
+        // CREATE CALENDAR EVENT
+        // ----------------------------------------------
+
+        const calendarResult =
+          await createWebinarCalendarEvent({
+            title: webinarTitle,
+
+            description:
+              'The 2-Day Experience That Will Transform the Way You Make Decisions About Money, Success, Leadership and Life.',
+
+            date:
+              normalizedCalendarDate,
+
+            time:
+              normalizedCalendarTime,
+
+            durationMinutes: 120,
+
+            location: webinarPlatform
+          });
+
+        if (
+          calendarResult &&
+          calendarResult.success &&
+          calendarResult.calendarContent
+        ) {
+          calendarAttachment = {
+            filename:
+              calendarResult.filename ||
+              'the-abundance-crossroad.ics',
+
+            content:
+              calendarResult.calendarContent,
+
+            contentType:
+              'text/calendar; charset=utf-8',
+
+            contentDisposition:
+              'attachment'
+          };
+
+          console.log(
+            'Calendar invitation generated successfully.'
+          );
+
+          console.log(
+            'Calendar file:',
+            calendarAttachment.filename
+          );
+        } else {
+          console.warn(
+            'Calendar invitation could not be generated.'
+          );
+        }
       }
     } else {
       console.warn(

@@ -10,14 +10,27 @@ const PaymentModel = {
   // ===================================================
   // CREATE PAYMENT RECORD
   // ===================================================
+  // IMPORTANT:
+  // Amount MUST be supplied by controller.
+  // Do not hard-code webinar price here.
+  // ===================================================
 
   createPayment: async ({
     registrationId,
     orderId,
-    amount = 249,
+    amount,
     currency = 'INR',
     status = 'pending'
   }) => {
+
+    if (
+      amount === undefined ||
+      amount === null ||
+      !Number.isFinite(Number(amount)) ||
+      Number(amount) < 0
+    ) {
+      throw new Error('Valid payment amount is required');
+    }
 
     const [result] = await db.query(
       `
@@ -34,7 +47,7 @@ const PaymentModel = {
       [
         registrationId,
         orderId,
-        amount,
+        Number(amount),
         currency,
         status
       ]
@@ -137,6 +150,15 @@ const PaymentModel = {
     currency = 'INR'
   }) => {
 
+    if (
+      amount === undefined ||
+      amount === null ||
+      !Number.isFinite(Number(amount)) ||
+      Number(amount) < 0
+    ) {
+      throw new Error('Valid payment amount is required');
+    }
+
     const [result] = await db.query(
       `
       UPDATE payments
@@ -154,7 +176,7 @@ const PaymentModel = {
       `,
       [
         orderId,
-        amount,
+        Number(amount),
         currency,
         paymentRecordId
       ]
@@ -166,6 +188,13 @@ const PaymentModel = {
 
   // ===================================================
   // UPDATE PAYMENT AFTER VERIFICATION
+  // ===================================================
+  // IMPORTANT:
+  // Only a PENDING payment can be changed.
+  //
+  // This makes payment verification atomic and prevents
+  // duplicate/simultaneous verification from processing
+  // the same payment more than once.
   // ===================================================
 
   updatePayment: async ({
@@ -190,6 +219,7 @@ const PaymentModel = {
         END
 
       WHERE order_id = ?
+        AND status = 'pending'
       `,
       [
         paymentId,

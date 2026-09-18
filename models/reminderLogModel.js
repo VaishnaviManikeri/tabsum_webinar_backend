@@ -153,11 +153,27 @@ class ReminderLogModel {
         r.payment_status,
         r.registration_status,
 
+        /*
+         * Registration snapshot fields.
+         * These preserve the webinar information
+         * that existed when the user registered.
+         */
+
+        r.webinar_title_snapshot,
+        r.webinar_subtitle_snapshot,
+        r.webinar_date_snapshot,
+        r.webinar_time_snapshot,
+        r.webinar_duration_snapshot,
+        r.webinar_language_snapshot,
+        r.webinar_platform_snapshot,
+        r.webinar_price_snapshot,
+
         w.id AS webinar_id,
         w.title AS webinar_title,
         w.date AS webinar_date,
         w.time AS webinar_time,
         w.duration AS webinar_duration,
+        w.language AS webinar_language,
         w.platform AS webinar_platform,
         w.price AS webinar_price,
 
@@ -188,12 +204,51 @@ class ReminderLogModel {
 
   // ====================================================
   // GET BY REGISTRATION + REMINDER TYPE
+  //
+  // Supports both:
+  //
+  // 1.
+  // getByRegistrationAndType({
+  //   registrationId,
+  //   reminderType
+  // })
+  //
+  // 2.
+  // getByRegistrationAndType(
+  //   registrationId,
+  //   reminderType
+  // )
   // ====================================================
 
-  static async getByRegistrationAndType({
-    registrationId,
-    reminderType
-  }) {
+  static async getByRegistrationAndType(
+    registrationIdOrObject,
+    reminderTypeArgument
+  ) {
+
+    let registrationId;
+    let reminderType;
+
+    // Object format
+    if (
+      typeof registrationIdOrObject === 'object' &&
+      registrationIdOrObject !== null
+    ) {
+
+      registrationId =
+        registrationIdOrObject.registrationId;
+
+      reminderType =
+        registrationIdOrObject.reminderType;
+
+    } else {
+
+      // Positional format
+      registrationId =
+        registrationIdOrObject;
+
+      reminderType =
+        reminderTypeArgument;
+    }
 
     const [rows] = await db.query(
       `
@@ -444,10 +499,20 @@ class ReminderLogModel {
         r.registration_status,
         r.webinar_id,
 
+        r.webinar_title_snapshot,
+        r.webinar_subtitle_snapshot,
+        r.webinar_date_snapshot,
+        r.webinar_time_snapshot,
+        r.webinar_duration_snapshot,
+        r.webinar_language_snapshot,
+        r.webinar_platform_snapshot,
+        r.webinar_price_snapshot,
+
         w.title AS webinar_title,
         w.date AS webinar_date,
         w.time AS webinar_time,
         w.duration AS webinar_duration,
+        w.language AS webinar_language,
         w.platform AS webinar_platform,
         w.price AS webinar_price,
 
@@ -531,10 +596,20 @@ class ReminderLogModel {
         r.registration_status,
         r.webinar_id,
 
+        r.webinar_title_snapshot,
+        r.webinar_subtitle_snapshot,
+        r.webinar_date_snapshot,
+        r.webinar_time_snapshot,
+        r.webinar_duration_snapshot,
+        r.webinar_language_snapshot,
+        r.webinar_platform_snapshot,
+        r.webinar_price_snapshot,
+
         w.title AS webinar_title,
         w.date AS webinar_date,
         w.time AS webinar_time,
         w.duration AS webinar_duration,
+        w.language AS webinar_language,
         w.platform AS webinar_platform,
         w.price AS webinar_price,
 
@@ -727,11 +802,29 @@ class ReminderLogModel {
         r.payment_status,
         r.registration_status,
 
+        /*
+         * Historical registration snapshot
+         */
+
+        r.webinar_title_snapshot,
+        r.webinar_subtitle_snapshot,
+        r.webinar_date_snapshot,
+        r.webinar_time_snapshot,
+        r.webinar_duration_snapshot,
+        r.webinar_language_snapshot,
+        r.webinar_platform_snapshot,
+        r.webinar_price_snapshot,
+
+        /*
+         * Current webinar data
+         */
+
         w.id AS webinar_id,
         w.title AS webinar_title,
         w.date AS webinar_date,
         w.time AS webinar_time,
         w.duration AS webinar_duration,
+        w.language AS webinar_language,
         w.platform AS webinar_platform,
         w.price AS webinar_price,
 
@@ -778,6 +871,10 @@ class ReminderLogModel {
     const conditions = [];
     const params = [];
 
+    // -----------------------------------------------
+    // Reminder type
+    // -----------------------------------------------
+
     if (reminderType) {
 
       conditions.push(
@@ -786,6 +883,10 @@ class ReminderLogModel {
 
       params.push(reminderType);
     }
+
+    // -----------------------------------------------
+    // Email status
+    // -----------------------------------------------
 
     if (emailStatus) {
 
@@ -796,6 +897,10 @@ class ReminderLogModel {
       params.push(emailStatus);
     }
 
+    // -----------------------------------------------
+    // WhatsApp status
+    // -----------------------------------------------
+
     if (whatsappStatus) {
 
       conditions.push(
@@ -805,6 +910,10 @@ class ReminderLogModel {
       params.push(whatsappStatus);
     }
 
+    // -----------------------------------------------
+    // Payment status
+    // -----------------------------------------------
+
     if (paymentStatus) {
 
       conditions.push(
@@ -813,6 +922,10 @@ class ReminderLogModel {
 
       params.push(paymentStatus);
     }
+
+    // -----------------------------------------------
+    // Search
+    // -----------------------------------------------
 
     if (search) {
 
@@ -865,6 +978,170 @@ class ReminderLogModel {
     return Number(
       rows[0]?.total || 0
     );
+  }
+
+
+  // ====================================================
+  // CREATE
+  //
+  // Compatibility wrapper
+  //
+  // Allows:
+  //
+  // ReminderLogModel.create({...})
+  //
+  // while preserving:
+  //
+  // createReminderLog({...})
+  // ====================================================
+
+  static async create({
+    registrationId,
+    reminderType,
+    scheduledAt
+  }) {
+
+    return this.createReminderLog({
+      registrationId,
+      reminderType,
+      scheduledAt
+    });
+  }
+
+
+  // ====================================================
+  // RESCHEDULE PENDING REMINDER
+  //
+  // IMPORTANT:
+  //
+  // If Admin changes webinar date/time:
+  //
+  // - Sent Email stays SENT
+  // - Sent WhatsApp stays SENT
+  // - Pending channels become PENDING
+  // - Failed channels become PENDING
+  // - Skipped channels can become PENDING
+  // - If new window already passed,
+  //   unsent channels become SKIPPED
+  // - Fully completed reminder is untouched
+  //
+  // This prevents already-sent reminders
+  // from being sent again.
+  // ====================================================
+
+  static async reschedulePendingReminder({
+    reminderId,
+    scheduledAt,
+    skipIfWindowPassed = false
+  }) {
+
+    // --------------------------------------------------
+    // Get existing reminder
+    // --------------------------------------------------
+
+    const [rows] = await db.query(
+      `
+      SELECT *
+      FROM webinar_reminder_logs
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [reminderId]
+    );
+
+    if (!rows.length) {
+      return false;
+    }
+
+    const reminder = rows[0];
+
+    // --------------------------------------------------
+    // Check already sent channels
+    // --------------------------------------------------
+
+    const emailSent =
+      reminder.email_status === 'sent';
+
+    const whatsappSent =
+      reminder.whatsapp_status === 'sent';
+
+    // --------------------------------------------------
+    // If both channels are already sent,
+    // NEVER modify the reminder.
+    // --------------------------------------------------
+
+    if (
+      emailSent &&
+      whatsappSent
+    ) {
+      return false;
+    }
+
+    // --------------------------------------------------
+    // Preserve existing statuses
+    // --------------------------------------------------
+
+    let emailStatus =
+      reminder.email_status;
+
+    let whatsappStatus =
+      reminder.whatsapp_status;
+
+    // --------------------------------------------------
+    // New reminder window already passed
+    // --------------------------------------------------
+
+    if (skipIfWindowPassed) {
+
+      if (!emailSent) {
+        emailStatus = 'skipped';
+      }
+
+      if (!whatsappSent) {
+        whatsappStatus = 'skipped';
+      }
+
+    } else {
+
+      // ------------------------------------------------
+      // New reminder window is in future.
+      //
+      // Only unsent channels become pending.
+      // ------------------------------------------------
+
+      if (!emailSent) {
+        emailStatus = 'pending';
+      }
+
+      if (!whatsappSent) {
+        whatsappStatus = 'pending';
+      }
+    }
+
+    // --------------------------------------------------
+    // Update reminder
+    // --------------------------------------------------
+
+    const [result] = await db.query(
+      `
+      UPDATE webinar_reminder_logs
+      SET
+        scheduled_at = ?,
+        email_status = ?,
+        whatsapp_status = ?,
+        error_message = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [
+        scheduledAt,
+        emailStatus,
+        whatsappStatus,
+        reminderId
+      ]
+    );
+
+    return result.affectedRows > 0;
   }
 
 
@@ -991,13 +1268,12 @@ class ReminderLogModel {
 
     return result.affectedRows > 0;
   }
-
-
-  // ====================================================
-  // EXPORT
-  // ====================================================
-
 }
+
+
+// ======================================================
+// EXPORT
+// ======================================================
 
 module.exports =
   ReminderLogModel;

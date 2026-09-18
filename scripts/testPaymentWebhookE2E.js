@@ -1,8 +1,11 @@
 const axios = require('axios');
 const db = require('../config/db');
 
-const RegistrationModel = require('../models/registrationModel');
-const PaymentModel = require('../models/paymentModel');
+const RegistrationModel =
+  require('../models/registrationModel');
+
+const PaymentModel =
+  require('../models/paymentModel');
 
 const WEBHOOK_URL =
   'http://localhost:5000/api/payments/webhook';
@@ -17,6 +20,9 @@ let registrationId = null;
 let paymentDbId = null;
 let webhookEventId = null;
 
+let webinarId = null;
+let webinarPrice = null;
+
 const testOrderId =
   `order_webhook_test_${Date.now()}`;
 
@@ -29,15 +35,18 @@ const testPaymentId =
 | Cleanup Test Data
 |--------------------------------------------------------------------------
 */
+
 async function cleanup() {
   try {
+
     /*
     |--------------------------------------------------------------------------
-    | Delete reminder logs created for this test registration
+    | Delete reminder logs
     |--------------------------------------------------------------------------
     */
 
     if (registrationId) {
+
       await db.query(
         `
         DELETE FROM webinar_reminder_logs
@@ -45,14 +54,48 @@ async function cleanup() {
         `,
         [registrationId]
       );
+
     }
+
 
     /*
     |--------------------------------------------------------------------------
-    | Delete payment directly using order_id
+    | Delete WhatsApp logs if linked by registration
     |--------------------------------------------------------------------------
-    | PaymentModel does not expose deletePayment(),
-    | so cleanup is done directly through MySQL.
+    */
+
+    if (registrationId) {
+
+      try {
+
+        await db.query(
+          `
+          DELETE FROM whatsapp_logs
+          WHERE registration_id = ?
+          `,
+          [registrationId]
+        );
+
+      } catch (error) {
+
+        /*
+         * Do not fail cleanup if the table/schema
+         * does not contain registration_id.
+         */
+
+        console.log(
+          'WhatsApp log cleanup skipped:',
+          error.message
+        );
+
+      }
+
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete payment
     |--------------------------------------------------------------------------
     */
 
@@ -64,6 +107,7 @@ async function cleanup() {
       [testOrderId]
     );
 
+
     /*
     |--------------------------------------------------------------------------
     | Delete webhook log
@@ -71,6 +115,7 @@ async function cleanup() {
     */
 
     if (webhookEventId) {
+
       await db.query(
         `
         DELETE FROM payment_webhook_logs
@@ -78,7 +123,9 @@ async function cleanup() {
         `,
         [webhookEventId]
       );
+
     }
+
 
     /*
     |--------------------------------------------------------------------------
@@ -87,6 +134,7 @@ async function cleanup() {
     */
 
     if (registrationId) {
+
       await db.query(
         `
         DELETE FROM registrations
@@ -94,19 +142,101 @@ async function cleanup() {
         `,
         [registrationId]
       );
+
     }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cleanup lead created by test
+    |--------------------------------------------------------------------------
+    */
+
+    await db.query(
+      `
+      DELETE FROM leads
+      WHERE email = ?
+      `,
+      [TEST_EMAIL]
+    );
+
 
     console.log(
       'TEST WEBHOOK DATA CLEANED UP'
     );
 
   } catch (error) {
+
     console.error(
       'Cleanup error:',
       error.message
     );
+
   }
 }
+
+
+/*
+|--------------------------------------------------------------------------
+| Get Latest Webinar
+|--------------------------------------------------------------------------
+*/
+
+async function getLatestWebinar() {
+
+  const [rows] = await db.query(
+    `
+    SELECT
+      id,
+      title,
+      subtitle,
+      date,
+      time,
+      duration,
+      language,
+      platform,
+      price
+    FROM webinars
+    ORDER BY id DESC
+    LIMIT 1
+    `
+  );
+
+
+  if (!rows.length) {
+
+    throw new Error(
+      'No webinar found in webinars table'
+    );
+
+  }
+
+
+  const webinar = rows[0];
+
+  const price =
+    Number(webinar.price);
+
+
+  if (
+    !Number.isFinite(price) ||
+    price <= 0
+  ) {
+
+    throw new Error(
+      `Invalid webinar price: ${webinar.price}`
+    );
+
+  }
+
+
+  return {
+    webinar,
+    price
+  };
+
+}
+
 
 /*
 |--------------------------------------------------------------------------
@@ -115,67 +245,181 @@ async function cleanup() {
 */
 
 async function runTest() {
+
   try {
 
     console.log('');
-    console.log('========================================');
+
     console.log(
-      'PAYMENT WEBHOOK E2E TEST STARTED'
+      '========================================'
     );
-    console.log('========================================');
+
+    console.log(
+      'DYNAMIC PAYMENT WEBHOOK E2E TEST STARTED'
+    );
+
+    console.log(
+      '========================================'
+    );
 
 
     /*
     |--------------------------------------------------------------------------
-    | STEP 1 — Create Temporary Registration
+    | STEP 1 — Read Latest Webinar
+    |--------------------------------------------------------------------------
+    */
+
+    const latestWebinar =
+      await getLatestWebinar();
+
+    webinarId =
+      latestWebinar.webinar.id;
+
+    webinarPrice =
+      latestWebinar.price;
+
+
+    console.log('');
+
+    console.log(
+      'STEP 1 LATEST WEBINAR:'
+    );
+
+    console.log({
+      webinarId,
+      title:
+        latestWebinar.webinar.title,
+      price:
+        webinarPrice,
+      currency: 'INR'
+    });
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | STEP 1 VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
+    if (!webinarId) {
+
+      throw new Error(
+        'Latest webinar ID is missing'
+      );
+
+    }
+
+
+    if (
+      !Number.isFinite(webinarPrice) ||
+      webinarPrice <= 0
+    ) {
+
+      throw new Error(
+        'Latest webinar price is invalid'
+      );
+
+    }
+
+
+    console.log(
+      'STEP 1 DYNAMIC WEBINAR VALIDATION PASSED'
+    );
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | STEP 2 — Create Temporary Registration
     |--------------------------------------------------------------------------
     */
 
     const registration =
       await RegistrationModel.createRegistration({
-        firstName: 'Webhook',
-        lastName: 'Test',
-        email: TEST_EMAIL,
-        phone: TEST_PHONE,
-        city: 'Pune',
-        role: 'Developer',
-        goal: 'Webhook E2E Testing',
-        consent: true,
-        webinarId: 1
+
+        firstName:
+          'Webhook',
+
+        lastName:
+          'DynamicTest',
+
+        email:
+          TEST_EMAIL,
+
+        phone:
+          TEST_PHONE,
+
+        city:
+          'Pune',
+
+        role:
+          'Developer',
+
+        goal:
+          'Dynamic Webinar Payment Webhook E2E Testing',
+
+        consent:
+          true,
+
+        webinarId
+
       });
+
 
     registrationId =
       registration.registrationId;
 
+
+    console.log('');
+
     console.log(
-      'STEP 1 TEMP REGISTRATION CREATED:',
+      'STEP 2 TEMP REGISTRATION CREATED:',
       registrationId
     );
 
 
     /*
     |--------------------------------------------------------------------------
-    | STEP 2 — Create Pending Payment
+    | STEP 3 — Create Pending Payment Using Dynamic Price
     |--------------------------------------------------------------------------
     */
 
     await PaymentModel.createPayment({
+
       registrationId,
-      orderId: testOrderId,
-      amount: 249,
-      currency: 'INR',
-      status: 'pending'
+
+      orderId:
+        testOrderId,
+
+      amount:
+        webinarPrice,
+
+      currency:
+        'INR',
+
+      status:
+        'pending'
+
     });
 
+
     console.log(
-      'STEP 2 PENDING PAYMENT CREATED FOR ORDER:',
-      testOrderId
+      'STEP 3 PENDING PAYMENT CREATED'
     );
+
+    console.log({
+      registrationId,
+      orderId:
+        testOrderId,
+      amount:
+        webinarPrice,
+      currency:
+        'INR'
+    });
 
 
     /*
     |--------------------------------------------------------------------------
-    | STEP 3 — Verify Initial Database State
+    | STEP 4 — Verify Initial Database State
     |--------------------------------------------------------------------------
     */
 
@@ -184,19 +428,26 @@ async function runTest() {
         `
         SELECT
           r.id,
+          r.webinar_id,
           r.payment_status,
           r.registration_status,
+
           p.id AS payment_db_id,
           p.status AS payment_db_status,
           p.amount,
           p.currency,
           p.order_id,
           p.payment_id
+
         FROM registrations r
+
         LEFT JOIN payments p
           ON p.registration_id = r.id
+
         WHERE r.id = ?
+
         ORDER BY p.id DESC
+
         LIMIT 1
         `,
         [registrationId]
@@ -204,9 +455,11 @@ async function runTest() {
 
 
     if (!beforeRows.length) {
+
       throw new Error(
         'Initial database state not found'
       );
+
     }
 
 
@@ -214,19 +467,44 @@ async function runTest() {
       beforeRows[0].payment_db_id;
 
 
+    console.log('');
+
     console.log(
-      'STEP 3 INITIAL DB STATE:',
+      'STEP 4 INITIAL DB STATE:'
+    );
+
+    console.log(
       beforeRows[0]
     );
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Validate Registration
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      Number(beforeRows[0].webinar_id) !==
+      Number(webinarId)
+    ) {
+
+      throw new Error(
+        'Registration webinar ID does not match latest webinar'
+      );
+
+    }
 
 
     if (
       beforeRows[0].payment_status !==
       'pending'
     ) {
+
       throw new Error(
         'Initial registration payment status is not pending'
       );
+
     }
 
 
@@ -234,9 +512,11 @@ async function runTest() {
       beforeRows[0].registration_status !==
       'registered'
     ) {
+
       throw new Error(
         'Initial registration status is not registered'
       );
+
     }
 
 
@@ -244,39 +524,46 @@ async function runTest() {
       beforeRows[0].payment_db_status !==
       'pending'
     ) {
+
       throw new Error(
         'Initial payment status is not pending'
       );
+
+    }
+
+
+    if (
+      Number(beforeRows[0].amount) !==
+      Number(webinarPrice)
+    ) {
+
+      throw new Error(
+        'Payment amount does not match current webinar price'
+      );
+
+    }
+
+
+    if (
+      beforeRows[0].currency !==
+      'INR'
+    ) {
+
+      throw new Error(
+        'Payment currency is not INR'
+      );
+
     }
 
 
     console.log(
-      'STEP 3 INITIAL DATABASE STATE VALIDATION PASSED'
+      'STEP 4 INITIAL DATABASE VALIDATION PASSED'
     );
 
 
     /*
     |--------------------------------------------------------------------------
-    | STEP 4 — Enable Razorpay Mock Mode
-    |--------------------------------------------------------------------------
-    */
-
-    process.env.RAZORPAY_MOCK_MODE =
-      'true';
-
-    process.env.RAZORPAY_MOCK_PAYMENT_STATUS =
-      'captured';
-
-    process.env.RAZORPAY_MOCK_PAYMENT_ORDER_ID =
-      testOrderId;
-
-    process.env.RAZORPAY_MOCK_PAYMENT_CURRENCY =
-      'INR';
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | STEP 5 — Build Webhook Payload
+    | STEP 5 — Build Dynamic Webhook Payload
     |--------------------------------------------------------------------------
     */
 
@@ -284,63 +571,125 @@ async function runTest() {
       `evt_webhook_test_${Date.now()}`;
 
 
-    const webhookPayload = {
-      id: webhookEventId,
+    const webhookAmountPaise =
+      Math.round(
+        webinarPrice * 100
+      );
 
-      event: 'payment.captured',
+
+    const webhookPayload = {
+
+      id:
+        webhookEventId,
+
+      event:
+        'payment.captured',
 
       payload: {
+
         payment: {
+
           entity: {
-            id: testPaymentId,
-            order_id: testOrderId,
-            amount: 24900,
-            currency: 'INR',
-            status: 'captured',
-            captured: true
+
+            id:
+              testPaymentId,
+
+            order_id:
+              testOrderId,
+
+            amount:
+              webhookAmountPaise,
+
+            currency:
+              'INR',
+
+            status:
+              'captured',
+
+            captured:
+              true
+
           }
+
         }
+
       }
+
     };
 
 
+    console.log('');
+
     console.log(
-      'STEP 4 WEBHOOK PAYLOAD CREATED'
+      'STEP 5 DYNAMIC WEBHOOK PAYLOAD CREATED'
     );
+
+    console.log({
+
+      eventId:
+        webhookEventId,
+
+      orderId:
+        testOrderId,
+
+      paymentId:
+        testPaymentId,
+
+      amountRupees:
+        webinarPrice,
+
+      amountPaise:
+        webhookAmountPaise,
+
+      currency:
+        'INR'
+
+    });
 
 
     /*
     |--------------------------------------------------------------------------
-    | STEP 6 — Send Actual HTTP Webhook Request
+    | STEP 6 — Send Webhook
     |--------------------------------------------------------------------------
     */
 
     const response =
       await axios.post(
+
         WEBHOOK_URL,
+
         webhookPayload,
+
         {
+
           headers: {
+
             'Content-Type':
               'application/json',
 
             'x-razorpay-signature':
               'MOCK_WEBHOOK_SIGNATURE'
+
           },
 
-          validateStatus: () => true
+          validateStatus:
+            () => true
+
         }
+
       );
 
 
+    console.log('');
+
     console.log(
-      'STEP 5 WEBHOOK HTTP STATUS:',
+      'STEP 6 WEBHOOK HTTP STATUS:',
       response.status
     );
 
 
     console.log(
-      'STEP 5 WEBHOOK RESPONSE:',
+      'STEP 6 WEBHOOK RESPONSE:',
       response.data
     );
 
@@ -349,14 +698,16 @@ async function runTest() {
       response.status !== 200 ||
       response.data.success !== true
     ) {
+
       throw new Error(
-        'Webhook processing failed'
+        'Dynamic webhook processing failed'
       );
+
     }
 
 
     console.log(
-      'STEP 5 WEBHOOK PROCESSING PASSED'
+      'STEP 6 WEBHOOK PROCESSING PASSED'
     );
 
 
@@ -378,38 +729,46 @@ async function runTest() {
           currency,
           status,
           paid_at
+
         FROM payments
+
         WHERE order_id = ?
+
         LIMIT 1
         `,
         [testOrderId]
       );
 
 
+    if (!paymentRows.length) {
+
+      throw new Error(
+        'Payment record disappeared'
+      );
+
+    }
+
+
+    console.log('');
+
     console.log(
-      'STEP 6 PAYMENT DB AFTER WEBHOOK:',
+      'STEP 7 PAYMENT DB AFTER WEBHOOK:'
+    );
+
+    console.log(
       paymentRows[0]
     );
 
 
-    if (!paymentRows.length) {
-      throw new Error(
-        'Payment record disappeared'
-      );
-    }
-
-
-    paymentDbId =
-      paymentRows[0].id;
-
-
     if (
-      paymentRows[0].registration_id !==
-      registrationId
+      Number(paymentRows[0].registration_id) !==
+      Number(registrationId)
     ) {
+
       throw new Error(
         'Payment registration ownership changed unexpectedly'
       );
+
     }
 
 
@@ -417,9 +776,11 @@ async function runTest() {
       paymentRows[0].status !==
       'paid'
     ) {
+
       throw new Error(
         'Payment status was not updated to paid'
       );
+
     }
 
 
@@ -427,9 +788,11 @@ async function runTest() {
       paymentRows[0].payment_id !==
       testPaymentId
     ) {
+
       throw new Error(
         'Payment ID was not saved correctly'
       );
+
     }
 
 
@@ -437,19 +800,23 @@ async function runTest() {
       paymentRows[0].order_id !==
       testOrderId
     ) {
+
       throw new Error(
         'Payment order ID changed unexpectedly'
       );
+
     }
 
 
     if (
       Number(paymentRows[0].amount) !==
-      249
+      Number(webinarPrice)
     ) {
+
       throw new Error(
         'Payment amount changed unexpectedly'
       );
+
     }
 
 
@@ -457,27 +824,33 @@ async function runTest() {
       paymentRows[0].currency !==
       'INR'
     ) {
+
       throw new Error(
         'Payment currency changed unexpectedly'
       );
+
     }
 
 
-    if (!paymentRows[0].paid_at) {
+    if (
+      !paymentRows[0].paid_at
+    ) {
+
       throw new Error(
         'Payment paid_at was not recorded'
       );
+
     }
 
 
     console.log(
-      'STEP 6 PAYMENT DATABASE UPDATE PASSED'
+      'STEP 7 PAYMENT DATABASE UPDATE PASSED'
     );
 
 
     /*
     |--------------------------------------------------------------------------
-    | STEP 8 — Verify Registration Database
+    | STEP 8 — Verify Registration
     |--------------------------------------------------------------------------
     */
 
@@ -486,36 +859,49 @@ async function runTest() {
         `
         SELECT
           id,
+          webinar_id,
           payment_status,
           registration_status
+
         FROM registrations
+
         WHERE id = ?
+
         LIMIT 1
         `,
         [registrationId]
       );
 
 
-    console.log(
-      'STEP 7 REGISTRATION DB AFTER WEBHOOK:',
-      registrationRows[0]
-    );
-
-
     if (!registrationRows.length) {
+
       throw new Error(
         'Registration record disappeared'
       );
+
     }
+
+
+    console.log('');
+
+    console.log(
+      'STEP 8 REGISTRATION DB AFTER WEBHOOK:'
+    );
+
+    console.log(
+      registrationRows[0]
+    );
 
 
     if (
       registrationRows[0].payment_status !==
       'paid'
     ) {
+
       throw new Error(
         'Registration payment_status was not updated to paid'
       );
+
     }
 
 
@@ -523,14 +909,28 @@ async function runTest() {
       registrationRows[0].registration_status !==
       'registered'
     ) {
+
       throw new Error(
         'Registration status changed unexpectedly'
       );
+
+    }
+
+
+    if (
+      Number(registrationRows[0].webinar_id) !==
+      Number(webinarId)
+    ) {
+
+      throw new Error(
+        'Registration webinar ID changed unexpectedly'
+      );
+
     }
 
 
     console.log(
-      'STEP 7 REGISTRATION DATABASE UPDATE PASSED'
+      'STEP 8 REGISTRATION DATABASE UPDATE PASSED'
     );
 
 
@@ -553,34 +953,46 @@ async function runTest() {
           processing_status,
           error_message,
           processed_at
+
         FROM payment_webhook_logs
+
         WHERE event_id = ?
+
         LIMIT 1
         `,
         [webhookEventId]
       );
 
 
-    console.log(
-      'STEP 8 WEBHOOK LOG:',
-      webhookRows[0]
-    );
-
-
     if (!webhookRows.length) {
+
       throw new Error(
         'Webhook log was not created'
       );
+
     }
+
+
+    console.log('');
+
+    console.log(
+      'STEP 9 WEBHOOK LOG:'
+    );
+
+    console.log(
+      webhookRows[0]
+    );
 
 
     if (
       webhookRows[0].event_id !==
       webhookEventId
     ) {
+
       throw new Error(
         'Webhook event ID was not saved correctly'
       );
+
     }
 
 
@@ -588,9 +1000,11 @@ async function runTest() {
       webhookRows[0].event_type !==
       'payment.captured'
     ) {
+
       throw new Error(
         'Webhook event type was not saved correctly'
       );
+
     }
 
 
@@ -598,9 +1012,11 @@ async function runTest() {
       webhookRows[0].payment_id !==
       testPaymentId
     ) {
+
       throw new Error(
         'Webhook payment ID was not saved correctly'
       );
+
     }
 
 
@@ -608,9 +1024,11 @@ async function runTest() {
       webhookRows[0].order_id !==
       testOrderId
     ) {
+
       throw new Error(
         'Webhook order ID was not saved correctly'
       );
+
     }
 
 
@@ -618,9 +1036,11 @@ async function runTest() {
       webhookRows[0].signature_valid !== 1 &&
       webhookRows[0].signature_valid !== true
     ) {
+
       throw new Error(
         'Webhook signature was not marked valid'
       );
+
     }
 
 
@@ -628,21 +1048,27 @@ async function runTest() {
       webhookRows[0].processing_status !==
       'processed'
     ) {
+
       throw new Error(
         'Webhook log was not marked processed'
       );
+
     }
 
 
-    if (!webhookRows[0].processed_at) {
+    if (
+      !webhookRows[0].processed_at
+    ) {
+
       throw new Error(
         'Webhook processed_at was not recorded'
       );
+
     }
 
 
     console.log(
-      'STEP 8 WEBHOOK LOG VALIDATION PASSED'
+      'STEP 9 WEBHOOK LOG VALIDATION PASSED'
     );
 
 
@@ -654,30 +1080,41 @@ async function runTest() {
 
     const duplicateResponse =
       await axios.post(
+
         WEBHOOK_URL,
+
         webhookPayload,
+
         {
+
           headers: {
+
             'Content-Type':
               'application/json',
 
             'x-razorpay-signature':
               'MOCK_WEBHOOK_SIGNATURE'
+
           },
 
-          validateStatus: () => true
+          validateStatus:
+            () => true
+
         }
+
       );
 
 
+    console.log('');
+
     console.log(
-      'STEP 9 DUPLICATE WEBHOOK STATUS:',
+      'STEP 10 DUPLICATE WEBHOOK STATUS:',
       duplicateResponse.status
     );
 
 
     console.log(
-      'STEP 9 DUPLICATE WEBHOOK RESPONSE:',
+      'STEP 10 DUPLICATE WEBHOOK RESPONSE:',
       duplicateResponse.data
     );
 
@@ -686,20 +1123,22 @@ async function runTest() {
       duplicateResponse.status !== 200 ||
       duplicateResponse.data.success !== true
     ) {
+
       throw new Error(
         'Duplicate webhook was not handled safely'
       );
+
     }
 
 
     console.log(
-      'STEP 9 DUPLICATE WEBHOOK PROTECTION PASSED'
+      'STEP 10 DUPLICATE WEBHOOK PROTECTION PASSED'
     );
 
 
     /*
     |--------------------------------------------------------------------------
-    | STEP 11 — Verify Payment Still Paid
+    | STEP 11 — Verify Final Payment State
     |--------------------------------------------------------------------------
     */
 
@@ -709,28 +1148,41 @@ async function runTest() {
         SELECT
           status,
           payment_id,
-          order_id
+          order_id,
+          amount,
+          currency
+
         FROM payments
+
         WHERE id = ?
+
         LIMIT 1
         `,
         [paymentDbId]
       );
 
 
+    console.log('');
+
     console.log(
-      'STEP 10 FINAL PAYMENT STATE:',
+      'STEP 11 FINAL PAYMENT STATE:'
+    );
+
+    console.log(
       finalPaymentRows[0]
     );
 
 
     if (
       !finalPaymentRows.length ||
-      finalPaymentRows[0].status !== 'paid'
+      finalPaymentRows[0].status !==
+        'paid'
     ) {
+
       throw new Error(
         'Payment state changed after duplicate webhook'
       );
+
     }
 
 
@@ -738,9 +1190,11 @@ async function runTest() {
       finalPaymentRows[0].payment_id !==
       testPaymentId
     ) {
+
       throw new Error(
         'Payment ID changed after duplicate webhook'
       );
+
     }
 
 
@@ -748,14 +1202,28 @@ async function runTest() {
       finalPaymentRows[0].order_id !==
       testOrderId
     ) {
+
       throw new Error(
         'Order ID changed after duplicate webhook'
       );
+
+    }
+
+
+    if (
+      Number(finalPaymentRows[0].amount) !==
+      Number(webinarPrice)
+    ) {
+
+      throw new Error(
+        'Final payment amount changed unexpectedly'
+      );
+
     }
 
 
     console.log(
-      'STEP 10 DUPLICATE WEBHOOK DATABASE INTEGRITY PASSED'
+      'STEP 11 FINAL PAYMENT INTEGRITY PASSED'
     );
 
 
@@ -766,32 +1234,59 @@ async function runTest() {
     */
 
     console.log('');
-    console.log('========================================');
+
     console.log(
-      'PAYMENT WEBHOOK E2E TEST PASSED'
+      '========================================'
     );
-    console.log('========================================');
+
+    console.log(
+      'DYNAMIC PAYMENT WEBHOOK E2E TEST PASSED'
+    );
+
+    console.log(
+      '========================================'
+    );
+
+    console.log('');
+
+    console.log(
+      'TEST SUMMARY:'
+    );
+
+    console.log({
+      webinarId,
+      webinarPrice,
+      registrationId,
+      paymentDbId,
+      orderId:
+        testOrderId,
+      paymentId:
+        testPaymentId
+    });
 
 
   } catch (error) {
 
     console.error('');
+
     console.error(
       '========================================'
     );
 
     console.error(
-      'PAYMENT WEBHOOK E2E TEST FAILED'
+      'DYNAMIC PAYMENT WEBHOOK E2E TEST FAILED'
     );
 
     console.error(
       '========================================'
     );
+
 
     console.error(
       error.response?.data ||
       error.message
     );
+
 
     process.exitCode = 1;
 
@@ -800,6 +1295,7 @@ async function runTest() {
     await cleanup();
 
   }
+
 }
 
 

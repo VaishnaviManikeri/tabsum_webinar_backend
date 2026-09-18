@@ -82,15 +82,50 @@ router.get(
 );
 
 // =========================================================
-// PROTECTED WEBINAR ROUTES
+// GET WEBINAR BY ID
+// Protected
 // =========================================================
 
-// Update webinar
-router.put(
+router.get(
+  '/:id',
+  authMiddleware,
+  WebinarController.getWebinarById
+);
+
+// =========================================================
+// CREATE WEBINAR
+// Protected
+// =========================================================
+
+router.post(
   '/',
   authMiddleware,
   upload.single('backgroundImage'),
+  WebinarController.createWebinar
+);
+
+// =========================================================
+// UPDATE WEBINAR
+// Protected
+// IMPORTANT: ID IS REQUIRED
+// =========================================================
+
+router.put(
+  '/:id',
+  authMiddleware,
+  upload.single('backgroundImage'),
   WebinarController.updateWebinar
+);
+
+// =========================================================
+// DELETE WEBINAR
+// Protected
+// =========================================================
+
+router.delete(
+  '/:id',
+  authMiddleware,
+  WebinarController.deleteWebinar
 );
 
 // =========================================================
@@ -117,5 +152,9 @@ router.delete(
   authMiddleware,
   WebinarController.deleteZoomMeeting
 );
+
+// =========================================================
+// EXPORT
+// =========================================================
 
 module.exports = router;

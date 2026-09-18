@@ -1,1037 +1,932 @@
-const db =
-  require('../config/db');
+const db = require("../config/db");
+const ReminderLogModel = require("../models/reminderLogModel");
 
-const ReminderLogModel =
-  require('../models/reminderLogModel');
+// ============================================================
+// CONFIGURATION
+// ============================================================
 
-
-// ======================================================
-// REMINDER CONFIGURATION
-// ======================================================
+const TIMEZONE = "Asia/Kolkata";
 
 const REMINDER_TYPES = {
-
-  REMINDER_24H:
-    'reminder_24h',
-
-  REMINDER_3H:
-    'reminder_3h',
-
-  REMINDER_30M:
-    'reminder_30m'
-
+  REMINDER_24H: "reminder_24h",
+  REMINDER_3H: "reminder_3h",
+  REMINDER_30M: "reminder_30m"
 };
 
+// ============================================================
+// DATE HELPERS
+// ============================================================
 
-const REMINDER_OFFSETS = {
+const normalizeDateString = (value) => {
+  if (!value) {
+    return null;
+  }
 
-  reminder_24h:
-    24 * 60 * 60 * 1000,
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(
+      value.getMonth() + 1
+    ).padStart(2, "0");
+    const day = String(
+      value.getDate()
+    ).padStart(2, "0");
 
-  reminder_3h:
-    3 * 60 * 60 * 1000,
+    return `${year}-${month}-${day}`;
+  }
 
-  reminder_30m:
-    30 * 60 * 1000
+  const stringValue = String(value).trim();
 
+  // YYYY-MM-DD
+  const directMatch =
+    stringValue.match(
+      /^(\d{4})-(\d{2})-(\d{2})/
+    );
+
+  if (directMatch) {
+    return `${directMatch[1]}-${directMatch[2]}-${directMatch[3]}`;
+  }
+
+  // Try Date parsing
+  const parsedDate = new Date(stringValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return parsedDate
+    .toISOString()
+    .slice(0, 10);
 };
 
-
-// ======================================================
-// TIMEZONE
-// ======================================================
-
-const WEBINAR_TIMEZONE =
-  'Asia/Kolkata';
-
-const WEBINAR_TIMEZONE_OFFSET =
-  '+05:30';
-
-
-// ======================================================
+// ============================================================
 // VALIDATE DATE
-// ======================================================
+// ============================================================
 
-const isValidDateString = (
-  date
-) => {
-
-  if (!date) {
-
+const isValidDateString = (value) => {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value)
+  ) {
     return false;
-
   }
 
+  const [year, month, day] =
+    value.split("-").map(Number);
 
-  const dateString =
-    String(date).trim();
-
-
-  const match =
-    dateString.match(
-      /^(\d{4})-(\d{2})-(\d{2})$/
-    );
-
-
-  if (!match) {
-
-    return false;
-
-  }
-
-
-  const year =
-    Number(match[1]);
-
-  const month =
-    Number(match[2]);
-
-  const day =
-    Number(match[3]);
-
-
-  const testDate =
-    new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day
-      )
-    );
-
-
-  return (
-
-    testDate.getUTCFullYear() ===
-      year &&
-
-    testDate.getUTCMonth() ===
-      month - 1 &&
-
-    testDate.getUTCDate() ===
-      day
-
+  const date = new Date(
+    Date.UTC(year, month - 1, day)
   );
 
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
 };
 
+// ============================================================
+// TIME PARSER
+//
+// Supported:
+//
+// 08:10
+// 08:10:00
+// 08:10PM
+// 08:10 PM
+// 08:10PM-10:00PM
+// 08:10 PM - 10:00 PM
+// ============================================================
 
-// ======================================================
+const parseTimeTo24Hour = (timeValue) => {
+  if (!timeValue) {
+    return null;
+  }
+
+  let value = String(timeValue).trim();
+
+  // If time range, use START time
+  if (value.includes("-")) {
+    value = value
+      .split("-")[0]
+      .trim();
+  }
+
+  // ----------------------------------------------------------
+  // 24-hour format HH:mm
+  // ----------------------------------------------------------
+
+  let match = value.match(
+    /^([01]\d|2[0-3]):([0-5]\d)$/
+  );
+
+  if (match) {
+    return {
+      hour: Number(match[1]),
+      minute: Number(match[2]),
+      second: 0
+    };
+  }
+
+  // ----------------------------------------------------------
+  // 24-hour format HH:mm:ss
+  // ----------------------------------------------------------
+
+  match = value.match(
+    /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/
+  );
+
+  if (match) {
+    return {
+      hour: Number(match[1]),
+      minute: Number(match[2]),
+      second: Number(match[3])
+    };
+  }
+
+  // ----------------------------------------------------------
+  // 12-hour format
+  // ----------------------------------------------------------
+
+  match = value.match(
+    /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i
+  );
+
+  if (match) {
+    let hour = Number(match[1]);
+    const minute = Number(match[2]);
+    const period =
+      match[3].toUpperCase();
+
+    if (hour < 1 || hour > 12) {
+      return null;
+    }
+
+    if (period === "AM") {
+      if (hour === 12) {
+        hour = 0;
+      }
+    } else {
+      if (hour !== 12) {
+        hour += 12;
+      }
+    }
+
+    return {
+      hour,
+      minute,
+      second: 0
+    };
+  }
+
+  return null;
+};
+
+// ============================================================
 // VALIDATE TIME
-// ======================================================
+// ============================================================
 
-const isValidTimeString = (
-  time
-) => {
-
-  if (!time) {
-
+const isValidTimeString = (value) => {
+  if (
+    typeof value !== "string" ||
+    !value.trim()
+  ) {
     return false;
-
   }
 
+  const timeValue = value.trim();
 
-  const timeString =
-    String(time).trim();
+  // ----------------------------------------------------------
+  // If range, validate both start and end
+  // ----------------------------------------------------------
 
+  if (timeValue.includes("-")) {
+    const parts =
+      timeValue.split("-");
 
-  return (
-    /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/
-      .test(timeString)
+    if (parts.length !== 2) {
+      return false;
+    }
+
+    const start = parseTimeTo24Hour(
+      parts[0].trim()
+    );
+
+    const end = parseTimeTo24Hour(
+      parts[1].trim()
+    );
+
+    return Boolean(start && end);
+  }
+
+  return Boolean(
+    parseTimeTo24Hour(timeValue)
   );
-
 };
 
+// ============================================================
+// IST DATE/TIME CREATION
+// ============================================================
 
-// ======================================================
-// NORMALIZE TIME
-// ======================================================
-
-const normalizeTime = (
-  time
+const createISTDate = (
+  dateString,
+  timeString
 ) => {
+  const normalizedDate =
+    normalizeDateString(dateString);
 
-  const timeString =
-    String(time).trim();
-
+  const parsedTime =
+    parseTimeTo24Hour(timeString);
 
   if (
-    /^\d{2}:\d{2}$/.test(
-      timeString
-    )
+    !normalizedDate ||
+    !parsedTime
   ) {
-
-    return `${timeString}:00`;
-
+    return null;
   }
 
+  const {
+    hour,
+    minute,
+    second
+  } = parsedTime;
 
-  return timeString;
+  /*
+    Create UTC timestamp corresponding to
+    the requested IST time.
 
+    IST = UTC + 05:30
+  */
+
+  const isoString =
+    `${normalizedDate}T` +
+    `${String(hour).padStart(2, "0")}:` +
+    `${String(minute).padStart(2, "0")}:` +
+    `${String(second).padStart(2, "0")}+05:30`;
+
+  const result =
+    new Date(isoString);
+
+  if (
+    Number.isNaN(result.getTime())
+  ) {
+    return null;
+  }
+
+  return result;
 };
 
-
-// ======================================================
-// CREATE WEBINAR DATE/TIME
-// ======================================================
-
-const createWebinarDateTime = ({
-  webinarDate,
-  webinarTime
-}) => {
-
-  if (
-    !isValidDateString(
-      webinarDate
-    )
-  ) {
-
-    throw new Error(
-      `Invalid webinar date: ${webinarDate}`
-    );
-
-  }
-
-
-  if (
-    !isValidTimeString(
-      webinarTime
-    )
-  ) {
-
-    throw new Error(
-      `Invalid webinar time: ${webinarTime}`
-    );
-
-  }
-
-
-  const normalizedTime =
-    normalizeTime(
-      webinarTime
-    );
-
-
-  const dateTimeString =
-    `${String(webinarDate).trim()}T${normalizedTime}${WEBINAR_TIMEZONE_OFFSET}`;
-
-
-  const webinarDateTime =
-    new Date(
-      dateTimeString
-    );
-
-
-  if (
-    Number.isNaN(
-      webinarDateTime.getTime()
-    )
-  ) {
-
-    throw new Error(
-      'Unable to create webinar date/time.'
-    );
-
-  }
-
-
-  return webinarDateTime;
-
-};
-
-
-// ======================================================
-// FORMAT DATE AS MYSQL DATETIME
-// ======================================================
+// ============================================================
+// FORMAT MYSQL DATETIME
+// ============================================================
 
 const formatMySQLDateTime = (
   date
 ) => {
-
-  const formatter =
-    new Intl.DateTimeFormat(
-      'en-CA',
-      {
-
-        timeZone:
-          WEBINAR_TIMEZONE,
-
-        year:
-          'numeric',
-
-        month:
-          '2-digit',
-
-        day:
-          '2-digit',
-
-        hour:
-          '2-digit',
-
-        minute:
-          '2-digit',
-
-        second:
-          '2-digit',
-
-        hourCycle:
-          'h23'
-
-      }
-    );
-
+  if (!(date instanceof Date)) {
+    return null;
+  }
 
   const parts =
-    formatter.formatToParts(
-      date
-    );
-
-
-  const values = {};
-
-
-  parts.forEach(
-    part => {
-
-      if (
-        part.type !==
-        'literal'
-      ) {
-
-        values[part.type] =
-          part.value;
-
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone: TIMEZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23"
       }
+    ).formatToParts(date);
 
-    }
-  );
-
+  const getPart = (type) =>
+    parts.find(
+      (part) =>
+        part.type === type
+    )?.value;
 
   return (
-
-    `${values.year}-${values.month}-${values.day}` +
-
-    ` ${values.hour}:${values.minute}:${values.second}`
-
+    `${getPart("year")}-` +
+    `${getPart("month")}-` +
+    `${getPart("day")} ` +
+    `${getPart("hour")}:` +
+    `${getPart("minute")}:` +
+    `${getPart("second")}`
   );
-
 };
 
-
-// ======================================================
+// ============================================================
 // CALCULATE REMINDER TIMES
-// ======================================================
+// ============================================================
 
 const calculateReminderTimes = ({
   webinarDate,
   webinarTime
 }) => {
-
   const webinarDateTime =
-    createWebinarDateTime({
-
+    createISTDate(
       webinarDate,
-
       webinarTime
-
-    });
-
-
-  const webinarTimestamp =
-    webinarDateTime.getTime();
-
-
-  const reminderTimes = {
-
-    reminder_24h:
-      new Date(
-        webinarTimestamp -
-        REMINDER_OFFSETS.reminder_24h
-      ),
-
-    reminder_3h:
-      new Date(
-        webinarTimestamp -
-        REMINDER_OFFSETS.reminder_3h
-      ),
-
-    reminder_30m:
-      new Date(
-        webinarTimestamp -
-        REMINDER_OFFSETS.reminder_30m
-      )
-
-  };
-
-
-  return {
-
-    webinarDateTime,
-
-    webinarDateTimeMySQL:
-      formatMySQLDateTime(
-        webinarDateTime
-      ),
-
-    reminder_24h:
-      formatMySQLDateTime(
-        reminderTimes.reminder_24h
-      ),
-
-    reminder_3h:
-      formatMySQLDateTime(
-        reminderTimes.reminder_3h
-      ),
-
-    reminder_30m:
-      formatMySQLDateTime(
-        reminderTimes.reminder_30m
-      )
-
-  };
-
-};
-
-
-// ======================================================
-// GET REMINDER TYPE DETAILS
-// ======================================================
-
-const getReminderTypeDetails = (
-  reminderType
-) => {
-
-  const offset =
-    REMINDER_OFFSETS[
-      reminderType
-    ];
-
-
-  if (!offset) {
-
-    throw new Error(
-      `Unsupported reminder type: ${reminderType}`
     );
 
+  if (!webinarDateTime) {
+    throw new Error(
+      "Invalid webinar date/time"
+    );
   }
 
+  const reminder24h =
+    new Date(
+      webinarDateTime.getTime() -
+        24 * 60 * 60 * 1000
+    );
+
+  const reminder3h =
+    new Date(
+      webinarDateTime.getTime() -
+        3 * 60 * 60 * 1000
+    );
+
+  const reminder30m =
+    new Date(
+      webinarDateTime.getTime() -
+        30 * 60 * 1000
+    );
 
   return {
+    webinarDateTime,
 
-    reminderType,
+    reminder24h,
+    reminder3h,
+    reminder30m,
 
-    offsetMilliseconds:
-      offset
+    reminder24hMySQL:
+      formatMySQLDateTime(
+        reminder24h
+      ),
 
+    reminder3hMySQL:
+      formatMySQLDateTime(
+        reminder3h
+      ),
+
+    reminder30mMySQL:
+      formatMySQLDateTime(
+        reminder30m
+      )
   };
-
 };
 
+// ============================================================
+// GET REMINDER TIME BY TYPE
+// ============================================================
 
-// ======================================================
-// CREATE REMINDER LOGS FOR ONE REGISTRATION
-// ======================================================
+const getReminderDateByType = (
+  reminderType,
+  reminderTimes
+) => {
+  switch (reminderType) {
+    case REMINDER_TYPES.REMINDER_24H:
+      return reminderTimes.reminder24h;
+
+    case REMINDER_TYPES.REMINDER_3H:
+      return reminderTimes.reminder3h;
+
+    case REMINDER_TYPES.REMINDER_30M:
+      return reminderTimes.reminder30m;
+
+    default:
+      return null;
+  }
+};
+
+// ============================================================
+// CREATE REMINDER LOGS FOR REGISTRATION
+// ============================================================
 
 const createReminderLogsForRegistration =
-  async (
-    registration
-  ) => {
-
-    if (!registration) {
-
+  async (registrationId) => {
+    if (!registrationId) {
       throw new Error(
-        'Registration details are required.'
+        "Registration ID is required"
       );
-
     }
 
+    // ----------------------------------------------------------
+    // Get registration + webinar snapshot
+    // ----------------------------------------------------------
 
-    if (!registration.id) {
+    const [rows] = await db.query(
+      `
+      SELECT
+        r.id,
+        r.webinar_id,
+        r.registration_status,
+        r.payment_status,
 
+        COALESCE(
+          r.webinar_date_snapshot,
+          w.date
+        ) AS webinar_date,
+
+        COALESCE(
+          r.webinar_time_snapshot,
+          w.time
+        ) AS webinar_time
+
+      FROM registrations r
+
+      LEFT JOIN webinars w
+        ON r.webinar_id = w.id
+
+      WHERE r.id = ?
+
+      LIMIT 1
+      `,
+      [registrationId]
+    );
+
+    if (!rows.length) {
       throw new Error(
-        'Registration ID is required.'
+        "Registration not found"
       );
-
     }
 
+    const registration =
+      rows[0];
 
-    // --------------------------------------------------
-    // Only paid registrations
-    // --------------------------------------------------
+    // ----------------------------------------------------------
+    // Only paid registrations get reminders
+    // ----------------------------------------------------------
 
     if (
       registration.payment_status !==
-      'paid'
+      "paid"
     ) {
-
       return {
-
         success: true,
-
         skipped: true,
-
         reason:
-          'Registration is not paid.',
-
-        registrationId:
-          registration.id,
-
-        created: 0,
-
-        reminders: []
-
+          "Registration is not paid",
+        created: 0
       };
-
     }
 
-
-    // --------------------------------------------------
-    // Only active registrations
-    // --------------------------------------------------
+    // ----------------------------------------------------------
+    // Only registered users
+    // ----------------------------------------------------------
 
     if (
-      registration.registration_status &&
       registration.registration_status !==
-        'registered'
+      "registered"
     ) {
-
       return {
-
         success: true,
-
         skipped: true,
-
         reason:
-          'Registration is not active.',
-
-        registrationId:
-          registration.id,
-
-        created: 0,
-
-        reminders: []
-
+          "Registration is not active",
+        created: 0
       };
-
     }
 
-
-    // --------------------------------------------------
+    // ----------------------------------------------------------
     // Validate webinar date/time
-    // --------------------------------------------------
+    // ----------------------------------------------------------
 
     if (
-      !isValidDateString(
-        registration.webinar_date
-      )
+      !registration.webinar_date ||
+      !registration.webinar_time
     ) {
-
       return {
-
         success: true,
-
         skipped: true,
-
         reason:
-          'Webinar date is not configured.',
-
-        registrationId:
-          registration.id,
-
-        created: 0,
-
-        reminders: []
-
+          "Webinar date/time is not configured",
+        created: 0
       };
-
     }
-
-
-    if (
-      !isValidTimeString(
-        registration.webinar_time
-      )
-    ) {
-
-      return {
-
-        success: true,
-
-        skipped: true,
-
-        reason:
-          'Webinar time is not configured.',
-
-        registrationId:
-          registration.id,
-
-        created: 0,
-
-        reminders: []
-
-      };
-
-    }
-
-
-    // --------------------------------------------------
-    // Calculate reminder times
-    // --------------------------------------------------
 
     const reminderTimes =
       calculateReminderTimes({
-
         webinarDate:
           registration.webinar_date,
-
         webinarTime:
           registration.webinar_time
-
       });
 
+    const now = new Date();
 
-    const now =
-      Date.now();
-
-
-    const reminders = [
-
+    const reminderDefinitions = [
       {
-
-        reminderType:
+        type:
           REMINDER_TYPES.REMINDER_24H,
-
         scheduledAt:
-          reminderTimes.reminder_24h
-
+          reminderTimes.reminder24h
       },
-
       {
-
-        reminderType:
+        type:
           REMINDER_TYPES.REMINDER_3H,
-
         scheduledAt:
-          reminderTimes.reminder_3h
-
+          reminderTimes.reminder3h
       },
-
       {
-
-        reminderType:
+        type:
           REMINDER_TYPES.REMINDER_30M,
-
         scheduledAt:
-          reminderTimes.reminder_30m
-
+          reminderTimes.reminder30m
       }
-
     ];
 
+    let created = 0;
+    let skipped = 0;
 
-    const created =
-      [];
-
-    let skippedCount =
-      0;
-
-
-    // --------------------------------------------------
+    // ----------------------------------------------------------
     // Create each reminder
-    // --------------------------------------------------
+    // ----------------------------------------------------------
 
     for (
-      const reminder of reminders
+      const reminder of reminderDefinitions
     ) {
-
-      const scheduledTimestamp =
-        new Date(
-          `${reminder.scheduledAt} Asia/Kolkata`
-        ).getTime();
-
-
-      // ------------------------------------------------
-      // Skip reminders whose time has passed
-      // ------------------------------------------------
-
+      // Do not create reminders whose window has passed
       if (
-        Number.isFinite(
-          scheduledTimestamp
-        ) &&
-        scheduledTimestamp <=
-          now
+        reminder.scheduledAt <= now
       ) {
-
-        console.log(
-
-          `Skipping ${reminder.reminderType} for registration ${registration.id} because scheduled time has passed.`
-
-        );
-
-
-        skippedCount++;
-
+        skipped++;
         continue;
-
       }
 
+      try {
+        const existing =
+          await ReminderLogModel.getByRegistrationAndType(
+            registrationId,
+            reminder.type
+          );
 
-      // ------------------------------------------------
-      // Create or get existing reminder
-      // ------------------------------------------------
+        if (existing) {
+          continue;
+        }
 
-      const reminderLog =
-        await ReminderLogModel
-          .createOrGetReminderLog({
-
-            registrationId:
-              registration.id,
-
-            reminderType:
-              reminder.reminderType,
-
-            scheduledAt:
+        await ReminderLogModel.create({
+          registrationId,
+          reminderType:
+            reminder.type,
+          scheduledAt:
+            formatMySQLDateTime(
               reminder.scheduledAt
+            )
+        });
 
-          });
+        created++;
+      } catch (error) {
+        // Duplicate entry can happen because of
+        // unique(registration_id, reminder_type)
+        if (
+          error.code ===
+          "ER_DUP_ENTRY"
+        ) {
+          continue;
+        }
 
-
-      created.push({
-
-        reminderType:
-          reminder.reminderType,
-
-        scheduledAt:
-          reminder.scheduledAt,
-
-        logId:
-          reminderLog?.id ||
-          null,
-
-        emailStatus:
-          reminderLog?.email_status ||
-          'pending',
-
-        whatsappStatus:
-          reminderLog?.whatsapp_status ||
-          'pending',
-
-        alreadyExists:
-          Boolean(
-            reminderLog?.id
-          )
-
-      });
-
+        throw error;
+      }
     }
-
 
     return {
-
-      success:
-        true,
-
-      skipped:
-        false,
-
-      registrationId:
-        registration.id,
-
-      webinarDate:
-        registration.webinar_date,
-
-      webinarTime:
-        registration.webinar_time,
-
-      created:
-        created.length,
-
-      skippedCount,
-
-      reminders:
-        created
-
+      success: true,
+      skipped: false,
+      created,
+      skippedPastWindows: skipped
     };
-
   };
 
-
-// ======================================================
+// ============================================================
 // CREATE REMINDER LOGS FOR ALL PAID REGISTRATIONS
-// ======================================================
+// ============================================================
 
 const createReminderLogsForPaidRegistrations =
-  async () => {
-
-    try {
-
-      const [registrations] =
-        await db.query(
-
-          `
-          SELECT
-
-            r.id,
-
-            r.first_name,
-
-            r.last_name,
-
-            r.email,
-
-            r.phone,
-
-            r.registration_status,
-
-            r.payment_status,
-
-            r.webinar_id,
-
-            w.title AS webinar_title,
-
-            w.date AS webinar_date,
-
-            w.time AS webinar_time,
-
-            w.duration AS webinar_duration,
-
-            w.platform AS webinar_platform,
-
-            w.zoom_meeting_id,
-
-            w.zoom_join_url,
-
-            w.zoom_start_url,
-
-            w.zoom_password,
-
-            w.zoom_created_at
-
-          FROM registrations r
-
-          INNER JOIN webinars w
-
-            ON r.webinar_id = w.id
-
-          WHERE
-
-            r.payment_status = 'paid'
-
-            AND r.registration_status = 'registered'
-
-          ORDER BY
-
-            r.id ASC
-
-          `
-
-        );
-
-
-      const results =
-        [];
-
-      let createdCount =
-        0;
-
-      let skippedCount =
-        0;
-
-
-      for (
-        const registration
-        of registrations
-      ) {
-
-        try {
-
-          const result =
-            await createReminderLogsForRegistration(
-              registration
-            );
-
-
-          results.push(
-            result
-          );
-
-
-          if (
-            result.skipped
-          ) {
-
-            skippedCount++;
-
-          }
-
-          else {
-
-            createdCount +=
-              result.created ||
-              0;
-
-          }
-
-        }
-
-
-        catch (error) {
-
-          console.error(
-
-            `Failed to create reminders for registration ${registration.id}:`,
-
-            error.message
-
-          );
-
-
-          results.push({
-
-            success:
-              false,
-
-            registrationId:
-              registration.id,
-
-            error:
-              error.message
-
-          });
-
-        }
-
-      }
-
-
-      return {
-
-        success:
-          true,
-
-        totalRegistrations:
-          registrations.length,
-
-        createdReminders:
-          createdCount,
-
-        skippedRegistrations:
-          skippedCount,
-
-        results
-
-      };
-
+  async (webinarId) => {
+    if (!webinarId) {
+      throw new Error(
+        "Webinar ID is required"
+      );
     }
 
-
-    catch (error) {
-
-      console.error(
-        'Create paid registration reminders error:',
-        error
+    const [registrations] =
+      await db.query(
+        `
+        SELECT id
+        FROM registrations
+        WHERE webinar_id = ?
+          AND payment_status = 'paid'
+          AND registration_status = 'registered'
+        ORDER BY id ASC
+        `,
+        [webinarId]
       );
 
+    let created = 0;
+    let skipped = 0;
+    let failed = 0;
 
-      return {
+    for (
+      const registration
+      of registrations
+    ) {
+      try {
+        const result =
+          await createReminderLogsForRegistration(
+            registration.id
+          );
 
-        success:
-          false,
+        created +=
+          result.created || 0;
 
-        totalRegistrations:
-          0,
+        skipped +=
+          result.skippedPastWindows ||
+          0;
+      } catch (error) {
+        failed++;
 
-        createdReminders:
-          0,
-
-        skippedRegistrations:
-          0,
-
-        results: [],
-
-        error:
+        console.error(
+          `Failed creating reminders for registration ${registration.id}:`,
           error.message
-
-      };
-
+        );
+      }
     }
 
+    return {
+      success: true,
+      webinarId,
+      registrations:
+        registrations.length,
+      created,
+      skipped,
+      failed
+    };
   };
 
+// ============================================================
+// RESCHEDULE PENDING REMINDERS FOR WEBINAR
+//
+// Called automatically when Admin changes
+// webinar date/time.
+//
+// IMPORTANT:
+// - Already SENT channels stay SENT.
+// - Pending/failed/skipped channels are rescheduled.
+// - If reminder window has already passed,
+//   unsent channel becomes SKIPPED.
+// - Already sent reminders are NEVER resent.
+// ============================================================
 
-// ======================================================
-// GET UPCOMING REMINDERS
-// ======================================================
-
-const getUpcomingReminders =
+const reschedulePendingRemindersForWebinar =
   async ({
-    minutes = 60,
-    limit = 100
-  } = {}) => {
+    webinarId,
+    webinarDate,
+    webinarTime
+  }) => {
+    if (!webinarId) {
+      throw new Error(
+        "Webinar ID is required"
+      );
+    }
 
-    return ReminderLogModel
-      .getUpcomingReminders({
+    if (
+      !webinarDate ||
+      !webinarTime
+    ) {
+      return {
+        success: true,
+        webinarId,
+        updated: 0,
+        skipped: 0,
+        reason:
+          "Webinar date/time is not configured"
+      };
+    }
 
-        minutes,
-
-        limit
-
+    const reminderTimes =
+      calculateReminderTimes({
+        webinarDate,
+        webinarTime
       });
 
+    const [registrations] =
+      await db.query(
+        `
+        SELECT
+          id
+        FROM registrations
+        WHERE webinar_id = ?
+          AND payment_status = 'paid'
+          AND registration_status = 'registered'
+        ORDER BY id ASC
+        `,
+        [webinarId]
+      );
+
+    const now = new Date();
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    const definitions = [
+      {
+        type:
+          REMINDER_TYPES.REMINDER_24H,
+        scheduledAt:
+          reminderTimes.reminder24h
+      },
+      {
+        type:
+          REMINDER_TYPES.REMINDER_3H,
+        scheduledAt:
+          reminderTimes.reminder3h
+      },
+      {
+        type:
+          REMINDER_TYPES.REMINDER_30M,
+        scheduledAt:
+          reminderTimes.reminder30m
+      }
+    ];
+
+    // ----------------------------------------------------------
+    // Process every paid registration
+    // ----------------------------------------------------------
+
+    for (
+      const registration
+      of registrations
+    ) {
+      for (
+        const definition
+        of definitions
+      ) {
+        const existing =
+          await ReminderLogModel.getByRegistrationAndType(
+            registration.id,
+            definition.type
+          );
+
+        // ------------------------------------------------------
+        // If no reminder log exists, create it
+        // ------------------------------------------------------
+
+        if (!existing) {
+          if (
+            definition.scheduledAt <= now
+          ) {
+            skipped++;
+            continue;
+          }
+
+          try {
+            await ReminderLogModel.create({
+              registrationId:
+                registration.id,
+
+              reminderType:
+                definition.type,
+
+              scheduledAt:
+                formatMySQLDateTime(
+                  definition.scheduledAt
+                )
+            });
+
+            created++;
+          } catch (error) {
+            if (
+              error.code ===
+              "ER_DUP_ENTRY"
+            ) {
+              // Another process may have created it
+              continue;
+            }
+
+            throw error;
+          }
+
+          continue;
+        }
+
+        // ------------------------------------------------------
+        // If both channels already sent:
+        // NEVER modify / resend
+        // ------------------------------------------------------
+
+        const emailSent =
+          existing.email_status ===
+          "sent";
+
+        const whatsappSent =
+          existing.whatsapp_status ===
+          "sent";
+
+        if (
+          emailSent &&
+          whatsappSent
+        ) {
+          continue;
+        }
+
+        // ------------------------------------------------------
+        // Reschedule pending/unsent channels
+        // ------------------------------------------------------
+
+        const shouldSkip =
+          definition.scheduledAt <= now;
+
+        await ReminderLogModel.reschedulePendingReminder(
+          {
+            reminderId:
+              existing.id,
+
+            scheduledAt:
+              formatMySQLDateTime(
+                definition.scheduledAt
+              ),
+
+            skipIfWindowPassed:
+              shouldSkip
+          }
+        );
+
+        if (shouldSkip) {
+          skipped++;
+        } else {
+          updated++;
+        }
+      }
+    }
+
+    return {
+      success: true,
+      webinarId,
+      registrations:
+        registrations.length,
+      created,
+      updated,
+      skipped
+    };
   };
 
-
-// ======================================================
+// ============================================================
 // GET DUE REMINDERS
-// ======================================================
+// ============================================================
 
 const getDueReminders =
-  async ({
-    limit = 20
-  } = {}) => {
-
-    return ReminderLogModel
-      .getPendingReminders({
-
-        limit
-
-      });
-
+  async () => {
+    return ReminderLogModel.getDueReminders();
   };
 
+// ============================================================
+// GET UPCOMING REMINDERS
+// ============================================================
 
-// ======================================================
+const getUpcomingReminders =
+  async (minutes = 60) => {
+    return ReminderLogModel.getUpcomingReminders(
+      minutes
+    );
+  };
+
+// ============================================================
 // EXPORTS
-// ======================================================
+// ============================================================
 
 module.exports = {
+  TIMEZONE,
 
   REMINDER_TYPES,
 
-  REMINDER_OFFSETS,
-
-  WEBINAR_TIMEZONE,
+  normalizeDateString,
 
   isValidDateString,
 
+  parseTimeTo24Hour,
+
   isValidTimeString,
 
-  normalizeTime,
-
-  createWebinarDateTime,
+  createISTDate,
 
   formatMySQLDateTime,
 
   calculateReminderTimes,
 
-  getReminderTypeDetails,
+  getReminderDateByType,
 
   createReminderLogsForRegistration,
 
   createReminderLogsForPaidRegistrations,
 
-  getUpcomingReminders,
+  reschedulePendingRemindersForWebinar,
 
-  getDueReminders
+  getDueReminders,
 
+  getUpcomingReminders
 };

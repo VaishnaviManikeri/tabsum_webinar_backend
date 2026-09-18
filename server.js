@@ -54,6 +54,9 @@ const paymentRoutes =
 const reminderRoutes =
   require('./routes/reminderRoutes');
 
+const notificationStatusRoutes =
+  require('./routes/notificationStatusRoutes');
+
 // ==================================================
 // EMAIL SERVICE - AMAZON SES
 // ==================================================
@@ -285,6 +288,11 @@ app.use(
 app.use(
   '/api/reminders',
   reminderRoutes
+);
+
+app.use(
+  '/api/notification-status',
+  notificationStatusRoutes
 );
 // ==================================================
 // EMAIL RETRY SCHEDULER

@@ -623,10 +623,23 @@ const getRazorpayPayment = async (
 
   try {
 
-    const payment =
+    let payment =
       await razorpay.payments.fetch(
         paymentId
       );
+
+    if (
+      payment.status === 'authorized'
+    ) {
+
+      payment =
+        await razorpay.payments.capture(
+          paymentId,
+          amount,
+          currency
+        );
+
+    }
 
 
     return payment;
