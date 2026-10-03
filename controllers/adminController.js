@@ -1,12 +1,22 @@
 const AdminModel = require('../models/adminModel');
 const jwt = require('jsonwebtoken');
 const dotenv = require('dotenv');
+const { isJwtSecretConfigured } = require('../config/security');
 
 dotenv.config();
 
 class AdminController {
   static async login(req, res) {
     try {
+      if (!isJwtSecretConfigured(process.env.JWT_SECRET)) {
+        console.error('JWT_SECRET is missing, weak, or a placeholder');
+
+        return res.status(503).json({
+          success: false,
+          message: 'Admin authentication is not configured securely.'
+        });
+      }
+
       const { email, password } = req.body;
 
       if (!email || !password) {
@@ -37,15 +47,6 @@ class AdminController {
         });
       }
 
-      if (!process.env.JWT_SECRET) {
-        console.error('JWT_SECRET is not configured');
-
-        return res.status(500).json({
-          success: false,
-          message: 'Server authentication configuration error'
-        });
-      }
-
       const token = jwt.sign(
         {
           id: admin.id,
@@ -53,7 +54,8 @@ class AdminController {
         },
         process.env.JWT_SECRET,
         {
-          expiresIn: '7d'
+          expiresIn: '7d',
+          algorithm: 'HS256'
         }
       );
 

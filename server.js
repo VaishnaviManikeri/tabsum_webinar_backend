@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const dotenv = require('dotenv');
 const multer = require('multer');
 const path = require('path');
@@ -38,6 +39,9 @@ const sectionRoutes =
 const settingsRoutes =
   require('./routes/settingsRoutes');
 
+const notificationTemplateRoutes =
+  require('./routes/notificationTemplateRoutes');
+
 
 // ==================================================
 // REGISTRATION / CRM / PAYMENT ROUTES
@@ -56,6 +60,13 @@ const reminderRoutes =
 
 const notificationStatusRoutes =
   require('./routes/notificationStatusRoutes');
+
+const attendanceRoutes =
+  require('./routes/attendanceRoutes');
+const {
+  apiLimiter,
+  adminLoginLimiter
+} = require('./middleware/rateLimiters');
 
 // ==================================================
 // EMAIL SERVICE - AMAZON SES
@@ -83,12 +94,17 @@ const {
   processDueReminders
 } = require('./services/reminderWorker');
 
+const {
+  processCompletedWebinarAttendance
+} = require('./services/attendanceService');
+
 
 // ==================================================
 // CREATE EXPRESS APP
 // ==================================================
 
 const app = express();
+app.disable('x-powered-by');
 
 const PORT =
   process.env.PORT || 5000;
@@ -116,6 +132,14 @@ if (!fs.existsSync(uploadsDir)) {
 // ==================================================
 // CORS
 // ==================================================
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: {
+      policy: 'cross-origin'
+    }
+  })
+);
 
 app.use(
   cors({
@@ -161,6 +185,9 @@ app.use(
 
   })
 );
+
+app.use('/api', apiLimiter);
+app.use('/api/admin/login', adminLoginLimiter);
 
 
 // ==================================================
@@ -255,6 +282,11 @@ app.use(
   settingsRoutes
 );
 
+app.use(
+  '/api/notification-templates',
+  notificationTemplateRoutes
+);
+
 
 // ==================================================
 // REGISTRATION ROUTES
@@ -293,6 +325,11 @@ app.use(
 app.use(
   '/api/notification-status',
   notificationStatusRoutes
+);
+
+app.use(
+  '/api/attendance',
+  attendanceRoutes
 );
 // ==================================================
 // EMAIL RETRY SCHEDULER
@@ -426,6 +463,36 @@ cron.schedule(
       '========================================\n'
     );
 
+  }
+);
+
+
+// ==================================================
+// ATTENDANCE AND RECORDING DELIVERY WORKER
+// ==================================================
+//
+// Every 15 minutes, completed Zoom meetings are synced.
+// Once Zoom can identify absentees and the recording exists,
+// the recording is delivered only to those paid absentees.
+//
+
+cron.schedule(
+  '*/15 * * * *',
+  async () => {
+    try {
+      const result =
+        await processCompletedWebinarAttendance();
+
+      console.log(
+        'Attendance worker result:',
+        result
+      );
+    } catch (error) {
+      console.error(
+        'Attendance worker error:',
+        error
+      );
+    }
   }
 );
 

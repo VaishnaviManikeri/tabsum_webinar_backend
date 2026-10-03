@@ -34,6 +34,7 @@ const {
 // ======================================================
 
 const {
+  sendWhatsAppCommunityInvite,
   sendWhatsAppRegistrationConfirmation
 } = require('../services/whatsappService');
 
@@ -1335,6 +1336,32 @@ if (
       }
 
     };
+
+
+    // ==================================================
+    // SEND WHATSAPP COMMUNITY INVITE
+    // ==================================================
+
+    try {
+
+      if (registration) {
+
+        await sendWhatsAppCommunityInvite({
+          registration
+        });
+
+      }
+
+    }
+
+    catch (communityError) {
+
+      console.error(
+        'Payment successful, but WhatsApp Community invite failed:',
+        communityError
+      );
+
+    }
 
 
     // ==================================================

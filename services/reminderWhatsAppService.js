@@ -1,6 +1,9 @@
 const ReminderLogModel =
   require('../models/reminderLogModel');
 
+const NotificationTemplateModel =
+  require('../models/notificationTemplateModel');
+
 const {
   sendWhatsAppTemplate
 } = require('./whatsappService');
@@ -45,9 +48,19 @@ const REMINDER_TEMPLATES = {
 // GET TEMPLATE NAME
 // ======================================================
 
-const getReminderTemplateName = (
+const getReminderTemplateName = async (
   reminderType
 ) => {
+
+  const databaseTemplate =
+    await NotificationTemplateModel.get(
+      'whatsapp',
+      reminderType
+    );
+
+  if (databaseTemplate?.template_name) {
+    return databaseTemplate.template_name;
+  }
 
   const templateName =
     REMINDER_TEMPLATES[
@@ -461,7 +474,13 @@ const sendReminderWhatsApp = async ({
   // ====================================================
 
   const templateName =
-    getReminderTemplateName(
+    await getReminderTemplateName(
+      reminderType
+    );
+
+  const notificationTemplate =
+    await NotificationTemplateModel.get(
+      'whatsapp',
       reminderType
     );
 
@@ -493,6 +512,7 @@ const sendReminderWhatsApp = async ({
         templateName,
 
         languageCode:
+          notificationTemplate?.language_code ||
           DEFAULT_TEMPLATE_LANGUAGE,
 
         parameters

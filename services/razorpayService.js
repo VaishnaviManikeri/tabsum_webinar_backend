@@ -13,7 +13,13 @@ dotenv.config();
 // RAZORPAY CONFIGURATION
 // ======================================================
 
+const LOCAL_TEST_MODE =
+  String(
+    process.env.LOCAL_TEST_MODE || 'false'
+  ).toLowerCase() === 'true';
+
 const RAZORPAY_MOCK_MODE =
+  LOCAL_TEST_MODE ||
   String(
     process.env.RAZORPAY_MOCK_MODE || 'false'
   ).toLowerCase() === 'true';

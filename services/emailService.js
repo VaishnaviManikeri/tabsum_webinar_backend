@@ -2,10 +2,15 @@ const nodemailer = require('nodemailer');
 
 const EmailLogModel = require('../models/emailLogModel');
 const WebinarModel = require('../models/webinarModel');
+const NotificationTemplateModel = require('../models/notificationTemplateModel');
 
 const {
   createWebinarCalendarEvent
 } = require('./calendarService');
+
+const EMAIL_MOCK_MODE =
+  String(process.env.EMAIL_MOCK_MODE || 'false')
+    .toLowerCase() === 'true';
 
 // ==================================================
 // AMAZON SES SMTP TRANSPORTER
@@ -33,6 +38,14 @@ const transporter = nodemailer.createTransport({
 // ==================================================
 
 async function verifyEmailConnection() {
+  if (EMAIL_MOCK_MODE) {
+    console.log(
+      'EMAIL MOCK MODE: SMTP connection check skipped.'
+    );
+
+    return true;
+  }
+
   try {
     await transporter.verify();
 
@@ -422,8 +435,19 @@ async function sendRegistrationConfirmation({
   // EMAIL SUBJECT
   // ==================================================
 
+  const confirmationTemplate =
+    await NotificationTemplateModel.get(
+      'email',
+      'confirmation'
+    );
+
   const subject =
+    confirmationTemplate?.subject ||
     'Registration Confirmed — The Abundance Crossroad™';
+
+  const confirmationMessage =
+    confirmationTemplate?.body ||
+    'Your registration for The Abundance Crossroad™ has been successfully confirmed.';
 
   // ==================================================
   // CALENDAR INVITE
@@ -611,7 +635,7 @@ Your Zoom meeting details will be shared with you separately.
   const text = `
 Hello ${recipientName},
 
-Your registration for The Abundance Crossroad™ has been successfully confirmed.
+${confirmationMessage}
 
 
 REGISTRATION DETAILS
@@ -911,11 +935,7 @@ The Abundance Crossroad™ Team
           line-height:1.7;
         "
       >
-        Your registration for
-        <strong>
-          The Abundance Crossroad™
-        </strong>
-        has been successfully confirmed.
+        ${confirmationMessage}
       </p>
 
 
@@ -1187,6 +1207,47 @@ The Abundance Crossroad™ Team
   // SEND EMAIL THROUGH AMAZON SES
   // ==================================================
 
+  if (EMAIL_MOCK_MODE) {
+    const messageId =
+      `<mock-email-${Date.now()}@example.com>`;
+
+    await EmailLogModel.markAsSent(
+      emailLog.id,
+      messageId
+    );
+
+    console.log(
+      'EMAIL MOCK MODE: registration confirmation captured.'
+    );
+
+    console.log(
+      'To:',
+      registration.email
+    );
+
+    console.log(
+      'Calendar attached:',
+      Boolean(calendarAttachment)
+    );
+
+    console.log(
+      'Zoom details included:',
+      Boolean(hasZoomDetails)
+    );
+
+    return {
+      success: true,
+      alreadySent: false,
+      mock: true,
+      messageId,
+      emailLogId: emailLog.id,
+      calendarAttached: Boolean(calendarAttachment),
+      zoomIncluded: Boolean(hasZoomDetails),
+      zoomMeetingId,
+      zoomJoinUrl
+    };
+  }
+
   try {
     const mailOptions = {
       from:
@@ -1322,6 +1383,120 @@ The Abundance Crossroad™ Team
 }
 
 // ==================================================
+// SEND WEBINAR RECORDING
+// ==================================================
+//
+// AttendanceService calls this only for paid registrants
+// whose absence was confirmed by Zoom or an administrator.
+// Delivery state is kept in webinar_attendance so a recording
+// is never sent again after a successful delivery.
+//
+// ==================================================
+
+const escapeHtml = (value) => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+async function sendWebinarRecording({
+  recipient,
+  webinar,
+  recordingUrl
+}) {
+  if (!recipient?.email) {
+    throw new Error('Recording recipient email is missing.');
+  }
+
+  if (!webinar?.title) {
+    throw new Error('Webinar title is missing.');
+  }
+
+  let safeRecordingUrl;
+
+  try {
+    const url = new URL(recordingUrl);
+
+    if (!['https:', 'http:'].includes(url.protocol)) {
+      throw new Error('Invalid recording URL protocol.');
+    }
+
+    safeRecordingUrl = url.toString();
+  } catch (error) {
+    throw new Error('A valid recording URL is required.');
+  }
+
+  const firstName =
+    escapeHtml(recipient.first_name) ||
+    'there';
+
+  const webinarTitle =
+    escapeHtml(webinar.title);
+
+  const subject =
+    `Your webinar recording: ${webinar.title}`;
+
+  const text = [
+    `Hi ${recipient.first_name || 'there'},`,
+    '',
+    `We missed you at ${webinar.title}.`,
+    'Your recording is ready:',
+    safeRecordingUrl,
+    '',
+    'The Abundance Crossroad Team'
+  ].join('\n');
+
+  const html = `
+    <div style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#1f2937;line-height:1.6">
+      <div style="padding:32px;background:#f3e8ff;border-radius:16px 16px 0 0">
+        <p style="margin:0 0 8px;color:#6b21a8;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Webinar recording</p>
+        <h1 style="margin:0;font-size:26px;color:#111827">Your recording is ready</h1>
+      </div>
+      <div style="padding:30px;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 16px 16px">
+        <p>Hi ${firstName},</p>
+        <p>We missed you at <strong>${webinarTitle}</strong>. You can watch the full recording at a time that works for you.</p>
+        <p style="margin:28px 0">
+          <a href="${escapeHtml(safeRecordingUrl)}" style="display:inline-block;padding:13px 22px;border-radius:8px;background:#6b21a8;color:#fff;font-weight:700;text-decoration:none">Watch the recording</a>
+        </p>
+        <p style="font-size:13px;color:#6b7280">If the button does not open, copy this link into your browser:<br><a href="${escapeHtml(safeRecordingUrl)}" style="color:#6b21a8;word-break:break-all">${escapeHtml(safeRecordingUrl)}</a></p>
+        <p>Regards,<br><strong>The Abundance Crossroad Team</strong></p>
+      </div>
+    </div>
+  `;
+
+  if (EMAIL_MOCK_MODE) {
+    const messageId =
+      `<mock-recording-${Date.now()}@example.com>`;
+
+    console.log(
+      'EMAIL MOCK MODE: webinar recording captured for:',
+      recipient.email
+    );
+
+    return {
+      success: true,
+      mock: true,
+      messageId
+    };
+  }
+
+  const info = await transporter.sendMail({
+    from: process.env.MAIL_FROM,
+    to: recipient.email,
+    subject,
+    text,
+    html
+  });
+
+  return {
+    success: true,
+    mock: false,
+    messageId: info.messageId || null
+  };
+}
+
+// ==================================================
 // EXPORT
 // ==================================================
 
@@ -1330,5 +1505,7 @@ module.exports = {
 
   verifyEmailConnection,
 
-  sendRegistrationConfirmation
+  sendRegistrationConfirmation,
+
+  sendWebinarRecording
 };

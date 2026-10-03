@@ -5,6 +5,9 @@ const {
 const ReminderLogModel =
   require('../models/reminderLogModel');
 
+const NotificationTemplateModel =
+  require('../models/notificationTemplateModel');
+
 
 // ======================================================
 // CONFIGURATION
@@ -221,7 +224,8 @@ const buildReminderText = ({
   zoomMeetingId,
   zoomJoinUrl,
   zoomPassword,
-  reminderType
+  reminderType,
+  customMessage
 }) => {
 
   const reminderLabel =
@@ -231,9 +235,7 @@ const buildReminderText = ({
 
 
   const reminderMessage =
-    getReminderMessage(
-      reminderType
-    );
+    customMessage || getReminderMessage(reminderType);
 
 
   return `
@@ -295,7 +297,8 @@ const buildReminderHtml = ({
   zoomMeetingId,
   zoomJoinUrl,
   zoomPassword,
-  reminderType
+  reminderType,
+  customMessage
 }) => {
 
   const reminderLabel =
@@ -305,9 +308,7 @@ const buildReminderHtml = ({
 
 
   const reminderMessage =
-    getReminderMessage(
-      reminderType
-    );
+    customMessage || getReminderMessage(reminderType);
 
 
   const hasZoomLink =
@@ -808,8 +809,15 @@ const sendReminderEmail = async ({
       reminderType
     );
 
+  const notificationTemplate =
+    await NotificationTemplateModel.get(
+      'email',
+      reminderType
+    );
+
 
   const subject =
+    notificationTemplate?.subject ||
     `${reminderLabel} — ${webinarTitle}`;
 
 
@@ -838,6 +846,9 @@ const sendReminderEmail = async ({
 
       zoomPassword,
 
+      customMessage:
+        notificationTemplate?.body,
+
       reminderType
 
     });
@@ -863,6 +874,9 @@ const sendReminderEmail = async ({
       zoomJoinUrl,
 
       zoomPassword,
+
+      customMessage:
+        notificationTemplate?.body,
 
       reminderType
 

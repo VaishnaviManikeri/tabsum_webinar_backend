@@ -577,6 +577,193 @@ const deleteZoomMeeting = async (
 
 
 // ==================================================
+// LIST ZOOM PARTICIPANTS
+// ==================================================
+//
+// `live` uses Zoom's Dashboard API while a meeting is
+// running. Completed meetings use the past-meeting API,
+// which is the source used to determine absentees.
+//
+// ==================================================
+
+const listMeetingParticipants = async (
+  meetingId,
+  {
+    live = false
+  } = {}
+) => {
+  if (!meetingId) {
+    throw new Error(
+      'Zoom meeting ID is required.'
+    );
+  }
+
+  if (ZOOM_MOCK_MODE) {
+    return {
+      success: true,
+      mock: true,
+      live,
+      participants: []
+    };
+  }
+
+  try {
+    const accessToken =
+      await getZoomAccessToken();
+
+    const participants = [];
+    let nextPageToken = null;
+
+    do {
+      const endpoint = live
+        ? `https://api.zoom.us/v2/metrics/meetings/${encodeURIComponent(meetingId)}/participants`
+        : `https://api.zoom.us/v2/past_meetings/${encodeURIComponent(meetingId)}/participants`;
+
+      const response = await axios.get(
+        endpoint,
+        {
+          params: {
+            page_size: 300,
+            ...(live ? { type: 'live' } : {}),
+            ...(nextPageToken
+              ? { next_page_token: nextPageToken }
+              : {})
+          },
+          headers: {
+            Authorization:
+              `Bearer ${accessToken}`
+          }
+        }
+      );
+
+      participants.push(
+        ...(response.data?.participants || [])
+      );
+
+      nextPageToken =
+        response.data?.next_page_token ||
+        null;
+    } while (nextPageToken);
+
+    return {
+      success: true,
+      mock: false,
+      live,
+      participants
+    };
+  } catch (error) {
+    const zoomError = new Error(
+      error.response?.data?.message ||
+      error.message ||
+      'Unable to fetch Zoom participants.'
+    );
+
+    zoomError.status =
+      error.response?.status ||
+      null;
+
+    zoomError.zoomCode =
+      error.response?.data?.code ||
+      null;
+
+    throw zoomError;
+  }
+};
+
+
+// ==================================================
+// GET CLOUD RECORDING
+// ==================================================
+
+const getMeetingRecording = async (
+  meetingId
+) => {
+  const configuredRecordingUrl =
+    String(
+      process.env.WEBINAR_RECORDING_URL ||
+      ''
+    ).trim();
+
+  if (configuredRecordingUrl) {
+    return {
+      success: true,
+      mock: ZOOM_MOCK_MODE,
+      recordingUrl: configuredRecordingUrl,
+      source: 'configured'
+    };
+  }
+
+  if (!meetingId) {
+    throw new Error(
+      'Zoom meeting ID is required.'
+    );
+  }
+
+  if (ZOOM_MOCK_MODE) {
+    return {
+      success: true,
+      mock: true,
+      recordingUrl: null,
+      source: 'mock'
+    };
+  }
+
+  try {
+    const accessToken =
+      await getZoomAccessToken();
+
+    const response = await axios.get(
+      `https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}/recordings`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`
+        }
+      }
+    );
+
+    const recordingFiles =
+      response.data?.recording_files ||
+      [];
+
+    const videoFile =
+      recordingFiles.find(
+        (file) => file.file_type === 'MP4'
+      ) ||
+      recordingFiles[0] ||
+      null;
+
+    return {
+      success: true,
+      mock: false,
+      recordingUrl:
+        response.data?.share_url ||
+        videoFile?.play_url ||
+        videoFile?.download_url ||
+        null,
+      source: 'zoom'
+    };
+  } catch (error) {
+    const zoomError = new Error(
+      error.response?.data?.message ||
+      error.message ||
+      'Unable to fetch the Zoom recording.'
+    );
+
+    zoomError.status =
+      error.response?.status ||
+      null;
+
+    zoomError.zoomCode =
+      error.response?.data?.code ||
+      null;
+
+    throw zoomError;
+  }
+};
+
+
+// ==================================================
 // EXPORT
 // ==================================================
 
@@ -586,8 +773,19 @@ module.exports = {
 
   createZoomMeeting,
 
+  // Backwards-compatible aliases used by WebinarModel.
+  createMeeting: createZoomMeeting,
+
   getZoomMeeting,
 
-  deleteZoomMeeting
+  getMeeting: getZoomMeeting,
+
+  deleteZoomMeeting,
+
+  deleteMeeting: deleteZoomMeeting,
+
+  listMeetingParticipants,
+
+  getMeetingRecording
 
 };

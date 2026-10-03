@@ -1,5 +1,6 @@
 const WhatsAppLogModel = require('../models/whatsappLogModel');
 const WebinarModel = require('../models/webinarModel');
+const NotificationTemplateModel = require('../models/notificationTemplateModel');
 
 
 // ======================================================
@@ -18,6 +19,9 @@ const WHATSAPP_ACCESS_TOKEN =
 const WHATSAPP_MOCK_MODE =
   String(process.env.WHATSAPP_MOCK_MODE || 'true')
     .toLowerCase() === 'true';
+
+const WHATSAPP_COMMUNITY_URL =
+  process.env.WHATSAPP_COMMUNITY_URL || '';
 
 
 // ======================================================
@@ -469,6 +473,117 @@ const getZoomDetailsForRegistration = async (
 
 
 // ======================================================
+// SEND WHATSAPP COMMUNITY INVITE
+// ======================================================
+
+const sendWhatsAppCommunityInvite = async ({
+  registration
+}) => {
+  if (!registration?.id) {
+    throw new Error(
+      'Registration ID is required for the WhatsApp Community invite.'
+    );
+  }
+
+  if (!registration.phone) {
+    throw new Error(
+      'Registration phone number is required for the WhatsApp Community invite.'
+    );
+  }
+
+  if (
+    !WHATSAPP_COMMUNITY_URL &&
+    !WHATSAPP_MOCK_MODE
+  ) {
+    throw new Error(
+      'WHATSAPP_COMMUNITY_URL must be configured before sending live Community invites.'
+    );
+  }
+
+  const whatsappLog =
+    await WhatsAppLogModel.createOrGetLog({
+      registrationId: registration.id,
+      phone: registration.phone,
+      whatsappType: 'community_invite'
+    });
+
+  if (whatsappLog.status === 'sent') {
+    return {
+      success: true,
+      alreadySent: true,
+      messageId: whatsappLog.message_id,
+      whatsappLogId: whatsappLog.id
+    };
+  }
+
+  const notificationTemplate =
+    await NotificationTemplateModel.get(
+      'whatsapp',
+      'community_invite'
+    );
+
+  const customerName =
+    `${registration.first_name || ''} ${registration.last_name || ''}`
+      .trim() ||
+    'Participant';
+
+  const webinarTitle =
+    registration.webinar_title ||
+    'The Abundance Crossroad™';
+
+  const communityUrl =
+    WHATSAPP_COMMUNITY_URL ||
+    'Test Community invite URL is not configured.';
+
+  try {
+    const result =
+      await sendWhatsAppTemplate({
+        phone: registration.phone,
+        templateName:
+          notificationTemplate?.template_name ||
+          process.env.WHATSAPP_COMMUNITY_TEMPLATE ||
+          'community_invite',
+        languageCode:
+          notificationTemplate?.language_code ||
+          process.env.WHATSAPP_TEMPLATE_LANGUAGE ||
+          'en_US',
+        // Configure the Meta template with:
+        // {{1}} participant name, {{2}} webinar title, {{3}} community invite URL.
+        parameters: [
+          customerName,
+          webinarTitle,
+          communityUrl
+        ]
+      });
+
+    await WhatsAppLogModel.markAsSent(
+      whatsappLog.id,
+      result.messageId
+    );
+
+    console.log(
+      'WhatsApp Community invite sent successfully.'
+    );
+
+    return {
+      success: true,
+      alreadySent: false,
+      mock: Boolean(result.mock),
+      messageId: result.messageId,
+      whatsappLogId: whatsappLog.id,
+      communityUrl: WHATSAPP_COMMUNITY_URL || null
+    };
+  } catch (error) {
+    await WhatsAppLogModel.markAsFailed(
+      whatsappLog.id,
+      error.message
+    );
+
+    throw error;
+  }
+};
+
+// ======================================================
 // SEND REGISTRATION CONFIRMATION
 // ======================================================
 
@@ -503,7 +618,14 @@ const sendWhatsAppRegistrationConfirmation = async ({
   }
 
 
+  const notificationTemplate =
+    await NotificationTemplateModel.get(
+      'whatsapp',
+      'confirmation'
+    );
+
   const templateName =
+    notificationTemplate?.template_name ||
     process.env.WHATSAPP_CONFIRMATION_TEMPLATE ||
     'registration_confirmation';
 
@@ -762,6 +884,7 @@ const sendWhatsAppRegistrationConfirmation = async ({
         templateName,
 
         languageCode:
+          notificationTemplate?.language_code ||
           process.env.WHATSAPP_TEMPLATE_LANGUAGE ||
           'en_US',
 
@@ -909,6 +1032,8 @@ module.exports = {
   normalizeIndianPhone,
 
   sendWhatsAppTemplate,
+
+  sendWhatsAppCommunityInvite,
 
   sendWhatsAppRegistrationConfirmation,
 

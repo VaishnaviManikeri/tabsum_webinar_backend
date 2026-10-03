@@ -124,6 +124,8 @@ const initializeDatabase = async () => {
 
         background_image VARCHAR(500),
 
+        recording_url TEXT NULL,
+
         created_at TIMESTAMP
           DEFAULT CURRENT_TIMESTAMP,
 
@@ -133,6 +135,29 @@ const initializeDatabase = async () => {
 
       )
     `);
+
+    // Existing databases were created before recording links were supported.
+    // Add the column once without affecting webinar data already in use.
+    const [recordingUrlColumn] =
+      await connection.query(
+        `
+        SELECT COLUMN_NAME
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'webinars'
+          AND COLUMN_NAME = 'recording_url'
+        `
+      );
+
+    if (recordingUrlColumn.length === 0) {
+      await connection.query(
+        `
+        ALTER TABLE webinars
+        ADD COLUMN recording_url TEXT NULL
+        AFTER background_image
+        `
+      );
+    }
 
 
     // =================================================
@@ -208,6 +233,37 @@ const initializeDatabase = async () => {
           ON UPDATE CURRENT_TIMESTAMP
 
       )
+    `);
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS notification_templates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        channel ENUM('email', 'whatsapp') NOT NULL,
+        message_type VARCHAR(100) NOT NULL,
+        template_name VARCHAR(255),
+        language_code VARCHAR(20),
+        subject VARCHAR(500),
+        body TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_notification_template (channel, message_type)
+      )
+    `);
+
+    await connection.query(`
+      INSERT IGNORE INTO notification_templates
+        (channel, message_type, template_name, language_code, subject, body)
+      VALUES
+        ('email', 'confirmation', NULL, 'en_US', 'Registration Confirmed — The Abundance Crossroad™', 'Your registration has been confirmed.'),
+        ('email', 'reminder_24h', NULL, 'en_US', '24-Hour Reminder — The Abundance Crossroad™', 'Your webinar is happening tomorrow. We are excited to have you with us!'),
+        ('email', 'reminder_3h', NULL, 'en_US', '3-Hour Reminder — The Abundance Crossroad™', 'Your webinar starts in 3 hours. Please keep your Zoom link ready.'),
+        ('email', 'reminder_30m', NULL, 'en_US', '30-Minute Reminder — The Abundance Crossroad™', 'Your webinar starts in 30 minutes. Please join on time.'),
+        ('whatsapp', 'confirmation', 'registration_confirmation', 'en_US', NULL, 'Personalized confirmation with participant, webinar, schedule and Zoom details.'),
+        ('whatsapp', 'community_invite', 'community_invite', 'en_US', NULL, 'Community invite with participant name, webinar title and invite URL.'),
+        ('whatsapp', 'reminder_24h', 'reminder_24h', 'en_US', NULL, 'Your webinar is happening tomorrow. We are excited to have you with us!'),
+        ('whatsapp', 'reminder_3h', 'reminder_3h', 'en_US', NULL, 'Your webinar starts in 3 hours. Please keep your Zoom details ready.'),
+        ('whatsapp', 'reminder_30m', 'reminder_30m', 'en_US', NULL, 'Your webinar starts in 30 minutes. Please join on time.')
     `);
 
 
@@ -447,6 +503,96 @@ await connection.query(`
 console.log(
   'Payment webhook logs table checked successfully'
 );
+
+    // =================================================
+    // WEBINAR ATTENDANCE TABLE
+    // =================================================
+    //
+    // One row per paid registration. Zoom synchronisation
+    // identifies attendees, while an admin can correct a
+    // status when Zoom does not expose a participant email.
+    // The same row also prevents duplicate recording emails.
+    //
+    // =================================================
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS webinar_attendance (
+
+        id INT AUTO_INCREMENT PRIMARY KEY,
+
+        registration_id INT NOT NULL,
+
+        webinar_id INT NOT NULL,
+
+        attendance_status ENUM(
+          'pending',
+          'attended',
+          'absent'
+        ) NOT NULL DEFAULT 'pending',
+
+        attendance_source ENUM(
+          'zoom',
+          'manual'
+        ) NULL,
+
+        participant_email VARCHAR(255) NULL,
+
+        joined_at DATETIME NULL,
+
+        left_at DATETIME NULL,
+
+        duration_minutes INT NULL,
+
+        last_synced_at DATETIME NULL,
+
+        recording_email_status ENUM(
+          'not_required',
+          'pending',
+          'sent',
+          'failed'
+        ) NOT NULL DEFAULT 'not_required',
+
+        recording_url TEXT NULL,
+
+        recording_email_message_id VARCHAR(500) NULL,
+
+        recording_email_sent_at DATETIME NULL,
+
+        recording_email_retry_count INT NOT NULL DEFAULT 0,
+
+        recording_email_error TEXT NULL,
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        updated_at TIMESTAMP
+          DEFAULT CURRENT_TIMESTAMP
+          ON UPDATE CURRENT_TIMESTAMP,
+
+        CONSTRAINT fk_attendance_registration
+          FOREIGN KEY (registration_id)
+          REFERENCES registrations(id)
+          ON DELETE CASCADE,
+
+        CONSTRAINT fk_attendance_webinar
+          FOREIGN KEY (webinar_id)
+          REFERENCES webinars(id)
+          ON DELETE CASCADE,
+
+        UNIQUE KEY unique_attendance_registration
+          (registration_id),
+
+        INDEX idx_attendance_webinar_status
+          (webinar_id, attendance_status),
+
+        INDEX idx_attendance_recording_status
+          (recording_email_status)
+
+      )
+    `);
+
+    console.log(
+      'Webinar attendance table checked successfully'
+    );
 
     // =================================================
     // WEBINAR REMINDER LOGS TABLE

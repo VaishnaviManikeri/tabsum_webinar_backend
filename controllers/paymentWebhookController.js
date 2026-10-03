@@ -17,6 +17,7 @@ const {
 } = require('../services/emailService');
 
 const {
+  sendWhatsAppCommunityInvite,
   sendWhatsAppRegistrationConfirmation
 } = require('../services/whatsappService');
 
@@ -965,7 +966,29 @@ const razorpayPayment =
 
 
     // =================================================
-    // STEP 25: SEND EMAIL
+    // STEP 25: SEND WHATSAPP COMMUNITY INVITE
+    // =================================================
+
+    try {
+
+      await sendWhatsAppCommunityInvite({
+        registration
+      });
+
+    }
+
+    catch (communityError) {
+
+      console.error(
+        'Webhook payment successful but WhatsApp Community invite failed:',
+        communityError
+      );
+
+    }
+
+
+    // =================================================
+    // STEP 26: SEND EMAIL
     // =================================================
 
     try {
@@ -1005,7 +1028,7 @@ const razorpayPayment =
 
 
     // =================================================
-    // STEP 26: SEND WHATSAPP
+    // STEP 27: SEND ZOOM WHATSAPP CONFIRMATION
     // =================================================
 
     try {
@@ -1029,7 +1052,7 @@ const razorpayPayment =
 
 
     // =================================================
-    // STEP 27: MARK WEBHOOK PROCESSED
+    // STEP 28: MARK WEBHOOK PROCESSED
     // =================================================
 
     await PaymentWebhookModel.markProcessed(
@@ -1038,7 +1061,7 @@ const razorpayPayment =
 
 
     // =================================================
-    // STEP 28: SUCCESS RESPONSE
+    // STEP 29: SUCCESS RESPONSE
     // =================================================
 
     console.log(
